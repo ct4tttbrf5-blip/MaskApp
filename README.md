@@ -2,22 +2,40 @@
 
 一个 SwiftUI 原生 iOS App，通过蓝牙连接并控制电子面膜 3.0：模式切换、档位、护理时长、倒计时自动停止、使用记录。
 
-当前状态：**代码完整，BLE 协议为占位值**，可先用内置的演示模式跑通全部界面与交互，不需要真实硬件。
+当前状态：**云端 macOS 编译已通过，未签名安装包在 `build-output/MaskApp-unsigned.ipa`**；BLE 协议仍是占位值，可先用内置演示模式跑通全部界面与交互，不需要真实硬件。
 
-工程已经是一个初始化好的本地 Git 仓库（首次提交已完成），源码与配置也已做过编译前验证：
+工程已初始化为本地 Git 仓库。云端 macOS（Xcode 26.6 / Swift 6.3.3）第 4 次构建成功，已拆包核验：Mach-O 可执行文件、图标资源、`NSBluetoothAlwaysUsageDescription`、`bluetooth-central` 后台模式、最低 iOS 16.0 均完整，且确实未签名（AltStore 重签需要这种形态）。
 
-- 10 个 Swift 文件经 Swift 语法解析器（tree-sitter-swift）解析，**0 语法错误**
-- `Info.plist` 可被正确解析（16 个键），`Assets.xcassets` 的 `Contents.json` 均为合法 JSON
-- `project.yml` 与 `build-ipa.yml` 均为合法 YAML，字段已按 XcodeGen / GitHub Actions 规范核对
-- 界面预览页 29 处 DOM 引用全部有对应元素，脚本括号配对通过
-
-注意：以上是**语法与配置级**验证。类型检查、链接和真机编译只能在 macOS 的 Xcode 里完成，走下面的云端流程；Swift 代码目前尚未经过 Xcode 编译。
+编译过程中修复的 4 类问题：空仓库下 Git Data API 返回 409、Xcode 26 要求显式 `-scheme`、固定 Swift 5 语言模式、`BluetoothManager` 漏声明两个 CoreBluetooth delegate 协议。
 
 ---
 
-## 一、先看界面（不需要任何工具）
+## 一、先看界面（不需要任何工具，也不用数据线）
 
-直接双击打开 `preview/index.html`，里面是四个页面的高保真预览，可以点模式、档位、时长和底部导航。这一步只是看外观，不是 App 本体。
+**电脑上**：双击 `preview/index.html`，四个页面的高保真预览，可点模式、档位、时长、底部导航。
+
+**手机上（零数据线、零账号、零签名）**：同一个 `preview/index.html` 也是手机全屏网页版。
+
+1. 双击 `start-phone-web.bat`（或执行 `python scripts/serve_phone.py`），窗口会打印一个 `http://192.168.x.x:8000` 的局域网地址。
+2. 手机和电脑连**同一个 WiFi**，iPhone 用 **Safari** 打开该地址。
+3. 点底部「分享」→ **添加到主屏幕** → 桌面多出图标，点开即全屏运行、无地址栏，四个页面都能点。
+4. 电脑要开着、服务窗口别关；关掉后主屏幕图标还在但打不开。
+
+首次启动若弹出 Windows 防火墙提示，勾选「专用网络」并点「允许访问」；手机打不开多半是防火墙拦了 Python。本机当前 WLAN 被识别为「公用网络」，必要时在「设置 → 网络和 Internet → WLAN → 当前网络」改成「专用网络」。
+
+> **能力边界**：iOS 上所有浏览器都是 WebKit，Safari **不支持 Web Bluetooth**，所以网页版只能看界面、走演示流程，**不能控制真实面膜**。蓝牙控制必须装原生 App（第三节）。
+
+### USB 连不上时，三条路怎么选
+
+| 方案 | 要数据线吗 | 要花钱吗 | 能控蓝牙吗 | 适合 |
+| --- | --- | --- | --- | --- |
+| **网页版（本节）** | 完全不用 | 不用 | ❌ | 立刻在手机上看界面、给客户演示 |
+| **免费侧载 AltStore / SideStore** | **首次必须一次** | 不用 | ✅ | 自己装机试用；7 天续签 |
+| **开发者账号 + TestFlight** | 完全不用 | ¥688/年 | ✅ | 正式产品、发客户、无 7 天限制 |
+
+**关于「完全不碰数据线」**：免费侧载做不到。AltStore、SideStore 首次都必须用数据线在电脑与 iPhone 之间建立一次信任配对，之后才能无线续签；2026 年新出的纯手机签名工具（AirSign 等）也只对 iOS 27+ 的免费账号免电脑，低版本仍需导入一次电脑生成的配对文件。第三方「在线签名 / 企业证书」确实能纯手机装，但证书随时被 Apple 吊销、要装描述文件、IPA 要交给第三方，不适合正式产品。
+
+若只是想少插几次线：**借一台能认出手机的电脑装上 SideStore**，之后 7 天续签全在手机上完成，再不用电脑和数据线。
 
 ---
 
@@ -60,11 +78,13 @@
 
 ## 三、装到 iPhone（免费侧载，无需开发者账号）
 
+> **数据线一直认不出设备？** 先按第一节用局域网网页版在手机上看界面；要真正装原生 App 又完全不碰数据线，只能走「开发者账号 + TestFlight」。三条路的取舍见第一节对比表。
+
 用的是 AltStore，原理是用你的普通 Apple ID 在电脑上给 IPA 重新签名后安装。
 
 ### 电脑端准备（一次即可）
 
-1. **先装 Apple 的驱动组件**（本机实测一个都没有，见下节）：到 <https://www.apple.com/itunes/download/win64> 下载 **官网安装版 iTunes** 并安装，完成后重启一次电脑。注意：**不要用 Microsoft Store 版**，它缺少 AltServer 依赖的 `Apple Mobile Device Service` / `Bonjour` 后台服务。官网安装版会一并装上这两个服务。若已改用「Apple Devices」App 且 AltServer 能识别手机，可跳过 iTunes。
+1. **Apple 驱动组件**：本机已装好官网版 iTunes 12.13.12.3 与 Apple Mobile Device Support 20.0.1.47，`Apple Mobile Device Service` 正在运行，**这一步可跳过**。换电脑时到 <https://www.apple.com/itunes/download/win64> 下载**官网安装版 iTunes** 装完重启；注意**不要用 Microsoft Store 版**，它缺少 AltServer 依赖的 `Apple Mobile Device Service` / `Bonjour` 后台服务。若已改用「Apple Devices」App 且 AltServer 能识别手机，也可不用 iTunes。
 2. 到 <https://altstore.io> 下载 **AltServer for Windows** 并安装。
 3. 按下一节把数据线连好、在手机上点「信任此电脑」，确认电脑已经认出手机。
 4. 运行 AltServer（出现在右下角托盘图标，**右键 → 以管理员身份运行**更稳）→ 点图标 → **Install AltStore** → 选你的 iPhone → 输入**用于签名**的 Apple ID 与密码（建议专门注册一个小号，原因见下）。
