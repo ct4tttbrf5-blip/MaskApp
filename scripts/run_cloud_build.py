@@ -33,7 +33,8 @@ UA = "maskapp-cloud-build"
 def load_token() -> str:
     token = os.environ.get("MASKAPP_GH_TOKEN", "").strip()
     if not token and TOKEN_FILE.exists():
-        lines = TOKEN_FILE.read_text(encoding="utf-8").strip().splitlines()
+        # utf-8-sig also tolerates a BOM written by Windows Notepad / PowerShell 5.1
+        lines = TOKEN_FILE.read_text(encoding="utf-8-sig").strip().splitlines()
         if lines:
             token = lines[0].strip()
     if not token:
