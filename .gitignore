@@ -11,6 +11,11 @@ Payload/
 xcuserdata/
 *.xcuserstate
 
+# Cloud build output (downloaded IPA) and local credentials
+build-output/
+.maskapp-token
+*.token
+
 # Python
 __pycache__/
 *.pyc
