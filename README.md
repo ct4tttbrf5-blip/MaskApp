@@ -64,11 +64,43 @@
 
 ### 电脑端准备（一次即可）
 
-1. 到 <https://altstore.io> 下载 **AltServer for Windows** 并安装。
-2. 如果安装或连接时提示缺少组件，去 Apple 官网下载安装版 **iTunes**（注意：**不要用 Microsoft Store 版**，它缺驱动）；新版系统若已能识别设备可跳过。
-3. 用数据线连接 iPhone，手机上点「信任此电脑」。
-4. 运行 AltServer（出现在右下角托盘图标）→ 点图标 → **Install AltStore** → 选你的 iPhone → 输入**用于签名**的 Apple ID 与密码（建议专门注册一个小号，原因见下）。
+1. **先装 Apple 的驱动组件**（本机实测一个都没有，见下节）：到 <https://www.apple.com/itunes/download/win64> 下载 **官网安装版 iTunes** 并安装，完成后重启一次电脑。注意：**不要用 Microsoft Store 版**，它缺少 AltServer 依赖的 `Apple Mobile Device Service` / `Bonjour` 后台服务。官网安装版会一并装上这两个服务。若已改用「Apple Devices」App 且 AltServer 能识别手机，可跳过 iTunes。
+2. 到 <https://altstore.io> 下载 **AltServer for Windows** 并安装。
+3. 按下一节把数据线连好、在手机上点「信任此电脑」，确认电脑已经认出手机。
+4. 运行 AltServer（出现在右下角托盘图标，**右键 → 以管理员身份运行**更稳）→ 点图标 → **Install AltStore** → 选你的 iPhone → 输入**用于签名**的 Apple ID 与密码（建议专门注册一个小号，原因见下）。
 5. 手机上打开「设置 → 通用 → VPN 与设备管理」，点开**用于签名的那个 Apple ID**，选「信任」。
+
+### 数据线连接：从插线到电脑认出手机
+
+**① 先看用哪根线** —— 两头接口要对得上，而且必须是**能传数据的线**（有些便宜线只能充电，插上永远没反应，原装线最稳）：
+
+| 手机型号 | 手机这头 | 电脑这头 |
+| --- | --- | --- |
+| iPhone 14 及更早 | Lightning（扁的小口） | USB-A（大口）或 USB-C，看电脑有什么口 |
+| iPhone 15 及以后 | USB-C | USB-C，或用 USB-C 转 USB-A 的线 |
+
+**② 插电脑的位置**：插**主机后面板 / 笔记本自带的 USB 口**，不要插 USB 分线器（Hub）、显示器上的口、键盘上的口、充电头。插到底，别松。
+
+**③ 手机上必须做的动作**：把手机**解锁、亮屏、停在主屏幕**，几秒后会弹出「要信任此电脑吗？」→ 点 **信任** → 输入锁屏密码。这一步没做，电脑就只能看到「在充电」，看不到设备。
+
+**④ 在电脑上确认连上了**（任选一个）：
+- 打开 iTunes 或「Apple Devices」App，左侧/顶部出现手机小图标 ✅
+- 右键开始菜单 → **设备管理器** → 「便携设备」或「通用串行总线设备」下出现 `Apple iPhone` / `Apple Mobile Device USB Driver`，且没有黄色感叹号 ✅
+- 「此电脑」里出现 iPhone，能点进去看到照片文件夹 ✅
+
+三个都没有 → 说明还没连上，按下面的表排查，先别急着开 AltServer。
+
+| 现象 | 处理 |
+| --- | --- |
+| 只充电、电脑毫无反应 | 换一根**确定能传数据**的原装线；换一个 USB 口；别用 Hub |
+| 不弹「信任此电脑」 | 保持手机解锁亮屏 → 拔下重插 → 还不行就重启手机和电脑；曾误点过「不信任」的话，到「设置 → 通用 → 传输或还原 iPhone → 还原 → 还原位置与隐私」后重插 |
+| 设备管理器有黄色感叹号 | 右键该设备 → 更新驱动程序 → 自动搜索；或重装官网版 iTunes 后重启电脑 |
+| iTunes 装了还是看不到 | `Win + R` 输入 `services.msc` → 找到 **Apple Mobile Device Service**，设为「自动」并点「启动」；Bonjour 服务同理 |
+| AltServer 提示找不到设备 | 用管理员身份运行 AltServer；关闭电脑和手机上的 VPN；防火墙允许 AltServer；全程保持手机解锁亮屏并插着线 |
+
+> 本机检测结果（2026-11-12）：未安装 iTunes / Apple Devices / Apple Mobile Device Service / Bonjour / AltServer，设备管理器里只有蓝牙配对残留，**没有任何 USB 连接的 iPhone 记录**。所以第 1 步的驱动组件在这台电脑上是必需的，不能跳过。
+>
+> 首次安装 AltStore **必须插线**；之后续签可以走同一 WiFi 无线完成。
 
 ### 关于 Apple ID：主号还是小号？
 
