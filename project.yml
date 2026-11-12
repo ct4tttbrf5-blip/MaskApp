@@ -6,13 +6,29 @@ options:
   groupSortPosition: top
 settings:
   base:
-    SWIFT_VERSION: "5.9"
+    # Xcode 26 ships Swift 6.3. Keep Swift 5 language mode for compatibility
+    # (avoids Swift 6 strict concurrency errors in SwiftUI / CoreBluetooth code).
+    SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     TARGETED_DEVICE_FAMILY: "1"
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
     CLANG_ENABLE_MODULES: "YES"
+# Explicit scheme: Xcode 26 requires -scheme whenever -derivedDataPath is used.
+schemes:
+  MaskApp:
+    build:
+      targets:
+        MaskApp: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
 targets:
   MaskApp:
     type: application
