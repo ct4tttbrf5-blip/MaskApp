@@ -4,6 +4,15 @@
 
 当前状态：**代码完整，BLE 协议为占位值**，可先用内置的演示模式跑通全部界面与交互，不需要真实硬件。
 
+工程已经是一个初始化好的本地 Git 仓库（首次提交已完成），源码与配置也已做过编译前验证：
+
+- 10 个 Swift 文件经 Swift 语法解析器（tree-sitter-swift）解析，**0 语法错误**
+- `Info.plist` 可被正确解析（16 个键），`Assets.xcassets` 的 `Contents.json` 均为合法 JSON
+- `project.yml` 与 `build-ipa.yml` 均为合法 YAML，字段已按 XcodeGen / GitHub Actions 规范核对
+- 界面预览页 29 处 DOM 引用全部有对应元素，脚本括号配对通过
+
+注意：以上是**语法与配置级**验证。类型检查、链接和真机编译只能在 macOS 的 Xcode 里完成，走下面的云端流程；Swift 代码目前尚未经过 Xcode 编译。
+
 ---
 
 ## 一、先看界面（不需要任何工具）
@@ -18,18 +27,19 @@
 
 ### 1. 建仓库并推送
 
-在 GitHub 新建一个仓库（建议选 **Public**，公开仓库可免费使用 macOS 构建机；私有仓库的 macOS 分钟数按 10 倍计费）。
+在 GitHub 新建一个**空仓库**（建议选 **Public**，公开仓库可免费使用 macOS 构建机；私有仓库的 macOS 分钟数按 10 倍计费）。**不要勾选 README / .gitignore / license**，否则远端会多出一次提交导致推送被拒。
 
-然后在本目录执行：
+**最省事**：双击 `push-to-github.bat`，或在 Git Bash 里执行 `bash push-to-github.sh`。粘贴仓库地址回车，脚本会自动配置远端、推送，并打开 Actions 页面。
+
+手动方式：
 
 ```bash
-git init
-git add .
-git commit -m "Initial iOS app"
-git branch -M main
+cd D:/BaiduSyncdisk/dnjswork/APP/MaskApp
 git remote add origin https://github.com/<你的用户名>/MaskApp.git
 git push -u origin main
 ```
+
+首次推送若弹出 GitHub 登录窗口，按提示用浏览器授权即可（Windows 一般自带 Git Credential Manager）。
 
 ### 2. 触发构建
 
@@ -108,6 +118,8 @@ MaskApp/
 ├── project.yml                     XcodeGen 工程定义（CI 里生成 .xcodeproj）
 ├── .github/workflows/build-ipa.yml 云端编译出未签名 IPA
 ├── .gitignore
+├── push-to-github.bat              一键推送（Windows 双击）
+├── push-to-github.sh               一键推送（Git Bash）
 ├── scripts/make_icon.py            生成 App 图标（纯 Python 标准库）
 ├── preview/index.html              界面预览，Windows 双击即可看
 └── MaskApp/                        Swift 源码
