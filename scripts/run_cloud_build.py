@@ -62,7 +62,8 @@ def load_token() -> str:
 
 
 def api(path: str, token: str, method: str = "GET", payload=None,
-        *, missing_ok: bool = False, retries: int = 4, timeout: int = 60):
+        *, missing_ok: bool = False, missing_codes=(404,),
+        retries: int = 4, timeout: int = 60):
     """Call GitHub REST API with retries for slow / flaky links."""
     url = path if path.startswith("http") else API + path
     data = json.dumps(payload).encode() if payload is not None else None
@@ -80,7 +81,7 @@ def api(path: str, token: str, method: str = "GET", payload=None,
                 body = response.read()
                 return json.loads(body) if body else {}
         except urllib.error.HTTPError as error:
-            if missing_ok and error.code == 404:
+            if missing_ok and error.code in missing_codes:
                 return None
             detail = error.read().decode("utf-8", "replace")[:600]
             if error.code >= 500 and attempt < retries - 1:
@@ -157,11 +158,23 @@ def collect_files():
 
 def push_via_api(repo: str, token: str, files) -> str:
     """Upload the working tree through the Git Data API; return the commit sha."""
-    ref = api(f"/repos/{repo}/git/ref/heads/main", token, missing_ok=True)
-    base_sha = ref["object"]["sha"] if ref else None
-    base_tree = None
-    if base_sha:
-        base_tree = api(f"/repos/{repo}/git/commits/{base_sha}", token)["tree"]["sha"]
+    # A truly empty repo answers 409 "Git Repository is empty" on EVERY Git
+    # Data API endpoint (refs, blobs, trees). Detect it via the ref query and
+    # seed one initial commit through the Contents API, which does work there.
+    # (Do NOT use the repo `size` field - it stays 0 for tiny repos.)
+    ref = api(f"/repos/{repo}/git/ref/heads/main", token,
+              missing_ok=True, missing_codes=(404, 409))
+    if ref is None:
+        print("      empty repo - seeding an initial commit ...", flush=True)
+        api(f"/repos/{repo}/contents/.gitkeep", token, "PUT", {
+            "message": "Initialize repository",
+            "content": base64.b64encode(b"\n").decode(),
+        })
+        time.sleep(1)
+        ref = api(f"/repos/{repo}/git/ref/heads/main", token)
+
+    base_sha = ref["object"]["sha"]
+    base_tree = api(f"/repos/{repo}/git/commits/{base_sha}", token)["tree"]["sha"]
 
     entries = []
     for index, rel in enumerate(files, 1):
@@ -224,7 +237,10 @@ def main() -> None:
             "name": name,
             "description": "Mask 3.0 iOS controller (SwiftUI + CoreBluetooth)",
             "private": False,
-            "auto_init": False,
+            # Seed an initial commit: GitHub's Git Data API returns 409 on a
+            # completely empty repository. The full tree upload below replaces
+            # this README anyway, so the final repo contains only our files.
+            "auto_init": True,
             "has_issues": False,
             "has_projects": False,
             "has_wiki": False,
@@ -279,7 +295,14 @@ def main() -> None:
                         f"{API}/repos/{repo}/actions/jobs/{job['id']}/logs", token
                     )
                     lines = raw.decode("utf-8", "replace").splitlines()
-                    for line in lines[-60:]:
+                    # Warnings can be hundreds of lines; surface compiler
+                    # errors instead of the useless tail of the log.
+                    errors = [l for l in lines if ": error:" in l]
+                    display = errors[-40:] if errors else lines[-60:]
+                    if errors:
+                        print(f"      ({len(errors)} error lines, "
+                              f"showing last {len(display)})")
+                    for line in display:
                         print("      " + line[:200])
                 except SystemExit as error:
                     print("      " + str(error))
