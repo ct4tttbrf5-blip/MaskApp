@@ -25,31 +25,36 @@
 
 苹果规定 iOS App 必须在 macOS + Xcode 上编译，Windows 做不到。所以编译交给 GitHub 的云端 macOS 构建机完成。
 
-### 1. 建仓库并推送
+### 方式 A · 推荐：一键代跑（不需要打开 GitHub 网页建仓库）
 
-在 GitHub 新建一个**空仓库**（建议选 **Public**，公开仓库可免费使用 macOS 构建机；私有仓库的 macOS 分钟数按 10 倍计费）。**不要勾选 README / .gitignore / license**，否则远端会多出一次提交导致推送被拒。
+**建仓库、推代码、盯 CI、下载 IPA 全部由脚本通过 `api.github.com` 完成**，既不用在浏览器里点「New repository」，也不用 `git push`（那个要连时通时断的 `github.com` 主站）。
 
-**最省事**：双击 `push-to-github.bat`，或在 Git Bash 里执行 `bash push-to-github.sh`。粘贴仓库地址回车，脚本会自动配置远端、推送，并打开 Actions 页面。
+1. 先拿授权。把 token **单独一行**写进 `D:\BaiduSyncdisk\dnjswork\APP\.maskapp-token`（该文件在仓库外，且已被 `.gitignore` 排除）：
+   - **推荐（电脑网页打不开时用这个）**：用**手机浏览器**打开 `https://github.com/settings/tokens/new?scopes=repo,workflow&description=MaskApp`（建议用移动数据，别连同一个 WiFi），登录 → 过期选 7 天 → 生成 classic PAT → 把那串 `ghp_...` 发到电脑写进文件。电脑一次都不用打开 GitHub 网页。
+   - 电脑网页能打开时，直接在电脑上做同样的事即可。
+   - 备选：双击 `device-login.bat`，用手机输入屏幕上的 8 位验证码完成授权。注意这条通道仍要连 `github.com` 主站，国内链路时通时断，脚本会自动重试；反复连不上就改用上面的 PAT 方式。授权页显示应用名 `GitHub CLI`，是 GitHub 官方命令行工具的公开设备授权通道，正常。
+2. 在工程目录执行（不带参数会自动使用 `<你的用户名>/MaskApp`，仓库不存在则自动创建为 Public）：
 
-手动方式：
+   ```bash
+   python scripts/run_cloud_build.py
+   ```
 
-```bash
-cd D:/BaiduSyncdisk/dnjswork/APP/MaskApp
-git remote add origin https://github.com/<你的用户名>/MaskApp.git
-git push -u origin main
-```
+   也可指定：`python scripts/run_cloud_build.py my-repo` 或 `owner/repo`。
+3. 脚本依次：验证身份 → 自动建仓库 → 通过 API 上传全部源码 → 等待云端 macOS 编译（约 5–10 分钟）→ 失败自动抓日志 → 成功后把 `MaskApp-unsigned.ipa` 下载到 `build-output/`。
+
+> 按项目约定只跑一次 Release 构建，不分 LED / 激光模式分别编译。
+> 构建失败时把脚本打印的报错发我，我改完你重跑同一条命令即可，本地不用装任何开发工具。
+> 全部跑完后删除 `.maskapp-token`，并到 <https://github.com/settings/applications> 撤销授权。
+
+### 方式 B · 手动推送（不需要 token）
+
+先在 GitHub 网页新建**空仓库**（选 **Public**，公开仓库可免费用 macOS 构建机；**不要勾选** README / .gitignore / license，否则远端会多一次提交导致推送被拒）。然后双击 `push-to-github.bat`，或在 Git Bash 里执行 `bash push-to-github.sh`，粘贴仓库地址回车。
 
 首次推送若弹出 GitHub 登录窗口，按提示用浏览器授权即可（Windows 一般自带 Git Credential Manager）。
 
-### 2. 触发构建
+推送后打开仓库 **Actions** 页 → 选 `Build unsigned IPA` → 点 **Run workflow**（推送本身也会自动触发）。流水线依次：安装 XcodeGen → 由 `project.yml` 生成 Xcode 工程 → 用 `xcodebuild` 编译未签名 Release 版 → 打包成 IPA → 上传为构建产物。
 
-打开仓库的 **Actions** 页 → 左侧选 `Build unsigned IPA` → 点 **Run workflow**（推送代码时也会自动触发）。
-
-流水线会依次：安装 XcodeGen → 由 `project.yml` 生成 Xcode 工程 → 用 `xcodebuild` 编译未签名 Release 版 → 打包成 `MaskApp-unsigned.ipa` → 上传为构建产物。
-
-约 5–10 分钟。跑完后在该次运行页面底部 **Artifacts** 下载 `MaskApp-unsigned-ipa`，解压得到 `MaskApp-unsigned.ipa`。
-
-> 如果构建失败，把 Actions 里的报错日志发我，我照着改。改完重新 push 即可，不需要你本地装任何开发工具。
+跑完在该次运行页面底部 **Artifacts** 下载 `MaskApp-unsigned-ipa`，解压得到 `MaskApp-unsigned.ipa`。
 
 ---
 
@@ -118,9 +123,13 @@ MaskApp/
 ├── project.yml                     XcodeGen 工程定义（CI 里生成 .xcodeproj）
 ├── .github/workflows/build-ipa.yml 云端编译出未签名 IPA
 ├── .gitignore
-├── push-to-github.bat              一键推送（Windows 双击）
-├── push-to-github.sh               一键推送（Git Bash）
+├── device-login.bat                ★ 网页打不开时，用手机验证码授权（Windows 双击）
+├── push-to-github.bat              手动一键推送（Windows 双击）
+├── push-to-github.sh               手动一键推送（Git Bash）
+├── scripts/run_cloud_build.py      ★ 全自动：建仓库→推代码→盯 CI→下载 IPA
+├── scripts/github_device_login.py  设备码授权（由 device-login.bat 调用）
 ├── scripts/make_icon.py            生成 App 图标（纯 Python 标准库）
+├── build-output/                   编译完成后 IPA 存放位置
 ├── preview/index.html              界面预览，Windows 双击即可看
 └── MaskApp/                        Swift 源码
     ├── MaskAppApp.swift            入口
@@ -156,6 +165,16 @@ MaskApp/
 
 **Q：为什么不直接给我一个能双击安装的 IPA？**
 苹果的签名机制不允许。IPA 必须用你的 Apple ID 证书签名才能装到你的手机上，这一步只能在你的电脑 + 你的账号下完成。云端编译只能产出未签名包。
+
+**Q：GitHub 网页打不开（ERR_CONNECTION_TIMED_OUT），怎么办？**
+
+国内宽带到 GitHub 经常慢且抖动，Edge 会在默认超时内先放弃，但这不代表被封。实测同一台电脑用命令行请求 `github.com/new` 能拿到 HTTP 200，只是耗时 3–20 秒不等。按优先级试：
+
+1. **最省事：电脑干脆不开网页**。用手机浏览器（移动数据）生成 PAT 写进 `.maskapp-token`，再跑 `python scripts/run_cloud_build.py`。建仓库、上传源码、盯 CI、下载 IPA 全走 `api.github.com`，这条链路实测稳定在 1 秒内；`github.com` 网页和 git 端点全程不碰。
+2. 想让电脑也能开：换手机热点给电脑，或开 Edge 的 InPrivate 窗口重试几次；直接访问 `https://github.com/settings/tokens/new?scopes=repo,workflow&description=MaskApp` 这类深链接，比首页轻、更容易加载。
+3. 关闭可能冲突的代理 / VPN 软件后重试。
+
+脚本对慢链路加了超时和自动重试。另外按项目约定只跑一次 Release 构建，不分 LED / 激光模式分别编译。
 
 **Q：能上 App Store 吗？**
 能，但需要付费开发者账号和审核。工程本身是标准原生工程，满足条件后可直接 Archive 提交或走 TestFlight。

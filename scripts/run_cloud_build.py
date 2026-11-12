@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
-"""Push MaskApp to GitHub, wait for the macOS CI build, download the unsigned IPA.
+"""Create the repo, upload the source, run the macOS CI build, fetch the IPA.
 
 Usage:
-    python scripts/run_cloud_build.py <owner>/<repo>
+    python scripts/run_cloud_build.py                 # auto: <your-login>/MaskApp
+    python scripts/run_cloud_build.py MaskApp        # <your-login>/MaskApp
+    python scripts/run_cloud_build.py owner/repo     # explicit repository
+
+IMPORTANT (why this does not use `git push`):
+    Everything goes through api.github.com ONLY. On some CN links the
+    github.com website / git endpoint is slow or drops connections while
+    api.github.com stays fast and stable. The repository is created, files are
+    uploaded with the Git Data API, the CI run is watched and the artifact is
+    downloaded - no browser page, no git smart-HTTP, no `github.com` host.
 
 Token (never printed, never written into the repo):
     file  D:/BaiduSyncdisk/dnjswork/APP/.maskapp-token   (single line), or
     env   MASKAPP_GH_TOKEN
 
-Required permissions: classic PAT with `repo` + `workflow`, or a fine-grained
-token with Contents (RW), Workflows (RW), Actions (R), Metadata (R).
-The repository should be Public - public repos get free macOS runners.
+    Classic PAT with `repo` + `workflow` is the reliable option. If the GitHub
+    website will not open on this PC, generate the PAT in a PHONE browser (use
+    mobile data) and copy it into that file. scripts/github_device_login.py is
+    an alternative, but its endpoint lives on the less reliable github.com host.
+
+Revoke the token when done: https://github.com/settings/tokens
 """
 
 import base64
@@ -28,6 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TOKEN_FILE = ROOT.parent / ".maskapp-token"
 API = "https://api.github.com"
 UA = "maskapp-cloud-build"
+DEFAULT_REPO = "MaskApp"
 
 
 def load_token() -> str:
@@ -38,31 +51,67 @@ def load_token() -> str:
         if lines:
             token = lines[0].strip()
     if not token:
-        sys.exit(f"No token. Put it in {TOKEN_FILE} (one line) or set MASKAPP_GH_TOKEN.")
+        sys.exit(
+            f"No token found.\n"
+            f"  Put it on one line in: {TOKEN_FILE}\n"
+            f"  Easiest when the website is down: create the PAT in a phone\n"
+            f"  browser (mobile data), then copy it into that file.\n"
+            f"  Alternative: python scripts/github_device_login.py"
+        )
     return token
 
 
-def api(path: str, token: str, method: str = "GET", payload=None):
+def api(path: str, token: str, method: str = "GET", payload=None,
+        *, missing_ok: bool = False, retries: int = 4, timeout: int = 60):
+    """Call GitHub REST API with retries for slow / flaky links."""
     url = path if path.startswith("http") else API + path
     data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", "Bearer " + token)
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    req.add_header("User-Agent", UA)
-    if data:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=45) as response:
-            body = response.read()
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", "replace")[:600]
-        sys.exit(f"GitHub API {method} {url} -> {error.code}: {detail}")
+    last_error = ""
+    for attempt in range(retries):
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+        req.add_header("User-Agent", UA)
+        if data:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                body = response.read()
+                return json.loads(body) if body else {}
+        except urllib.error.HTTPError as error:
+            if missing_ok and error.code == 404:
+                return None
+            detail = error.read().decode("utf-8", "replace")[:600]
+            if error.code >= 500 and attempt < retries - 1:
+                print(f"      API {error.code}, retry {attempt + 1}/{retries - 1} ...",
+                      flush=True)
+                time.sleep(3 * (attempt + 1))
+                continue
+            if error.code == 403 and url.endswith("/user/repos"):
+                sys.exit(
+                    "This token cannot create repositories. Use a classic PAT with "
+                    "`repo` + `workflow`, or create the empty repo on GitHub once "
+                    "and re-run."
+                )
+            sys.exit(f"GitHub API {method} {url} -> {error.code}: {detail}")
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            last_error = str(error)
+            if attempt < retries - 1:
+                print(f"      Network slow ({last_error}), "
+                      f"retry {attempt + 1}/{retries - 1} ...", flush=True)
+                time.sleep(3 * (attempt + 1))
+                continue
+            sys.exit(
+                f"Network error calling {url}: {last_error}\n"
+                f"GitHub can be slow on this link. Try again, or switch to a "
+                f"mobile hotspot."
+            )
+    sys.exit(f"Giving up on {url}: {last_error}")
 
 
 def download_redirect(url: str, token: str) -> bytes:
-    """GitHub artifact / log endpoints answer with a 302 to a signed URL.
+    """Artifact / log endpoints answer with a 302 to a signed URL.
     Do not forward the Authorization header to that third-party host."""
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -74,72 +123,123 @@ def download_redirect(url: str, token: str) -> bytes:
     req.add_header("Authorization", "Bearer " + token)
     req.add_header("User-Agent", UA)
     try:
-        with opener.open(req, timeout=60) as response:
+        with opener.open(req, timeout=90) as response:
             return response.read()
     except urllib.error.HTTPError as error:
         if error.code in (301, 302, 303, 307, 308):
             location = error.headers.get("Location")
             if location:
-                with urllib.request.urlopen(location, timeout=180) as response:
+                with urllib.request.urlopen(location, timeout=240) as response:
                     return response.read()
         sys.exit(f"Download failed: {error.code} for {url}")
 
 
-def git(*args, token: str = "", check: bool = True):
+def collect_files():
+    """Tracked + new (non-ignored) files, with git's own path separator."""
     result = subprocess.run(
-        ["git", *args], cwd=ROOT, capture_output=True, text=True
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT, capture_output=True, text=True,
     )
-    if check and result.returncode:
-        safe = (result.stdout + result.stderr)
-        if token:
-            safe = safe.replace(token, "***")
-        sys.exit("git " + " ".join(args) + " failed:\n" + safe[:2000])
-    return result.stdout.strip()
+    if result.returncode:
+        sys.exit("Cannot list project files with git:\n" + result.stderr[:1000])
+    paths = []
+    for line in result.stdout.splitlines():
+        rel = line.strip()
+        if not rel or rel.startswith(".git/"):
+            continue
+        path = ROOT / rel
+        if path.is_file():
+            paths.append(rel)
+    if not paths:
+        sys.exit("No source files found - is this the MaskApp directory?")
+    return sorted(paths)
+
+
+def push_via_api(repo: str, token: str, files) -> str:
+    """Upload the working tree through the Git Data API; return the commit sha."""
+    ref = api(f"/repos/{repo}/git/ref/heads/main", token, missing_ok=True)
+    base_sha = ref["object"]["sha"] if ref else None
+    base_tree = None
+    if base_sha:
+        base_tree = api(f"/repos/{repo}/git/commits/{base_sha}", token)["tree"]["sha"]
+
+    entries = []
+    for index, rel in enumerate(files, 1):
+        content = (ROOT / rel).read_bytes()
+        blob = api(f"/repos/{repo}/git/blobs", token, "POST", {
+            "content": base64.b64encode(content).decode(),
+            "encoding": "base64",
+        })
+        entries.append({"path": rel, "mode": "100644", "type": "blob",
+                        "sha": blob["sha"]})
+        if index % 6 == 0 or index == len(files):
+            print(f"      uploaded {index}/{len(files)} files ...", flush=True)
+
+    tree = api(f"/repos/{repo}/git/trees", token, "POST", {"tree": entries})
+    if tree["sha"] == base_tree:
+        print("      content unchanged - reusing existing commit", flush=True)
+        return base_sha
+
+    payload = {
+        "message": "Build MaskApp (uploaded via GitHub API)",
+        "tree": tree["sha"],
+    }
+    if base_sha:
+        payload["parents"] = [base_sha]
+    commit = api(f"/repos/{repo}/git/commits", token, "POST", payload)
+    sha = commit["sha"]
+
+    if ref:
+        api(f"/repos/{repo}/git/refs/heads/main", token, "PATCH", {"sha": sha})
+    else:
+        api(f"/repos/{repo}/git/refs", token, "POST",
+            {"ref": "refs/heads/main", "sha": sha})
+    return sha
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        sys.exit("Usage: python scripts/run_cloud_build.py <owner>/<repo>")
-    repo = (
-        sys.argv[1].strip()
-        .replace("https://github.com/", "")
-        .removesuffix(".git")
-        .strip("/")
-    )
-    if "/" not in repo:
-        sys.exit("Repository must look like owner/repo")
+    arg = (sys.argv[1].strip() if len(sys.argv) > 1 else "")
+    arg = (arg.replace("https://github.com/", "")
+              .removesuffix(".git").strip("/"))
 
     token = load_token()
 
-    # 1. Verify credentials and repository
+    # 1. Authenticate, resolve the repo, create it if needed (no browser needed)
     user = api("/user", token)
-    print(f"[1/5] Authenticated as {user['login']}")
-    info = api(f"/repos/{repo}", token)
+    login = user["login"]
+    print(f"[1/5] Authenticated as {login}")
+    if not arg:
+        repo = f"{login}/{DEFAULT_REPO}"
+        print(f"      No repo given -> using {repo}")
+    elif "/" not in arg:
+        repo = f"{login}/{arg}"
+    else:
+        repo = arg
+
+    info = api(f"/repos/{repo}", token, missing_ok=True)
+    if info is None:
+        name = repo.split("/", 1)[1]
+        print(f"      {repo} not found -> creating PUBLIC repo via API ...", flush=True)
+        info = api("/user/repos", token, "POST", {
+            "name": name,
+            "description": "Mask 3.0 iOS controller (SwiftUI + CoreBluetooth)",
+            "private": False,
+            "auto_init": False,
+            "has_issues": False,
+            "has_projects": False,
+            "has_wiki": False,
+        })
+        print(f"      Created: {info['html_url']}", flush=True)
+        time.sleep(2)
     print(f"      Repository {info['full_name']} (private={info['private']})")
     if info["private"]:
         print("      Note: private repos bill macOS minutes at 10x the free quota.")
 
-    # 2. Push. The token goes through a temporary http.extraheader, so it
-    #    never lands in .git/config, the remote URL, or the command output.
-    head = git("rev-parse", "HEAD", token=token)
-    git("remote", "remove", "origin", token=token, check=False)
-    git("remote", "add", "origin", f"https://github.com/{repo}.git", token=token)
-    credential = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    push = subprocess.run(
-        [
-            "git",
-            "-c", "credential.helper=",
-            "-c", f"http.extraheader=AUTHORIZATION: basic {credential}",
-            "push", "-u", "origin", "main",
-        ],
-        cwd=ROOT, capture_output=True, text=True, env=env,
-    )
-    if push.returncode:
-        safe = (push.stdout + push.stderr).replace(token, "***").replace(credential, "***")
-        sys.exit("[2/5] Push failed:\n" + safe[:2000])
-    print(f"[2/5] Pushed commit {head[:7]} to main")
+    # 2. Upload source via api.github.com (never touches github.com / git push)
+    files = collect_files()
+    print(f"[2/5] Uploading {len(files)} files via GitHub API ...", flush=True)
+    head = push_via_api(repo, token, files)
+    print(f"[2/5] Commit {head[:7]} is now on main")
 
     # 3. Find the CI run (push should trigger it; dispatch as a fallback)
     start = time.time()
@@ -152,7 +252,8 @@ def main() -> None:
             run = matches[0]
             if run["status"] == "completed":
                 break
-            print(f"[3/5] Build {run['status']} ... {int(time.time() - start)}s", flush=True)
+            print(f"[3/5] Build {run['status']} ... {int(time.time() - start)}s",
+                  flush=True)
         elif not dispatched and time.time() - start > 30:
             api(
                 f"/repos/{repo}/actions/workflows/build-ipa.yml/dispatches",
@@ -207,7 +308,9 @@ def main() -> None:
         sys.exit("[5/5] Artifact downloaded but contains no .ipa file.")
     print("\nDONE - unsigned IPA ready:")
     print(f"  {ipa}  ({ipa.stat().st_size // 1024} KB)")
-    print("\nNext: sign and install with AltStore (README.md section 3).")
+    print("\nNote: main was updated through the API; your local git history does")
+    print("      not need to be in sync for the build to work.")
+    print("Next: sign and install with AltStore (README.md section 3).")
 
 
 if __name__ == "__main__":
