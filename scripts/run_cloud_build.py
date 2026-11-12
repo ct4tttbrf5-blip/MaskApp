@@ -159,23 +159,22 @@ def collect_files():
 def push_via_api(repo: str, token: str, files) -> str:
     """Upload the working tree through the Git Data API; return the commit sha."""
     # A truly empty repo answers 409 "Git Repository is empty" on EVERY Git
-    # Data API endpoint (refs, blobs, trees). Seed one initial commit through
-    # the Contents API first - that endpoint does work on an empty repo.
-    info = api(f"/repos/{repo}", token)
-    if info.get("size", 0) == 0:
+    # Data API endpoint (refs, blobs, trees). Detect it via the ref query and
+    # seed one initial commit through the Contents API, which does work there.
+    # (Do NOT use the repo `size` field - it stays 0 for tiny repos.)
+    ref = api(f"/repos/{repo}/git/ref/heads/main", token,
+              missing_ok=True, missing_codes=(404, 409))
+    if ref is None:
         print("      empty repo - seeding an initial commit ...", flush=True)
         api(f"/repos/{repo}/contents/.gitkeep", token, "PUT", {
             "message": "Initialize repository",
             "content": base64.b64encode(b"\n").decode(),
         })
         time.sleep(1)
+        ref = api(f"/repos/{repo}/git/ref/heads/main", token)
 
-    ref = api(f"/repos/{repo}/git/ref/heads/main", token,
-              missing_ok=True, missing_codes=(404, 409))
-    base_sha = ref["object"]["sha"] if ref else None
-    base_tree = None
-    if base_sha:
-        base_tree = api(f"/repos/{repo}/git/commits/{base_sha}", token)["tree"]["sha"]
+    base_sha = ref["object"]["sha"]
+    base_tree = api(f"/repos/{repo}/git/commits/{base_sha}", token)["tree"]["sha"]
 
     entries = []
     for index, rel in enumerate(files, 1):
@@ -296,7 +295,14 @@ def main() -> None:
                         f"{API}/repos/{repo}/actions/jobs/{job['id']}/logs", token
                     )
                     lines = raw.decode("utf-8", "replace").splitlines()
-                    for line in lines[-60:]:
+                    # Warnings can be hundreds of lines; surface compiler
+                    # errors instead of the useless tail of the log.
+                    errors = [l for l in lines if ": error:" in l]
+                    display = errors[-40:] if errors else lines[-60:]
+                    if errors:
+                        print(f"      ({len(errors)} error lines, "
+                              f"showing last {len(display)})")
+                    for line in display:
                         print("      " + line[:200])
                 except SystemExit as error:
                     print("      " + str(error))

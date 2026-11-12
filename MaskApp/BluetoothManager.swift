@@ -13,7 +13,8 @@ struct DiscoveredDevice: Identifiable, Equatable {
     }
 }
 
-final class BluetoothManager: NSObject, ObservableObject {
+final class BluetoothManager: NSObject, ObservableObject,
+                              CBCentralManagerDelegate, CBPeripheralDelegate {
 
     // MARK: 界面状态
 
