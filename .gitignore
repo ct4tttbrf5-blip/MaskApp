@@ -1,0 +1,16 @@
+# XcodeGen output and build products
+MaskApp.xcodeproj/
+build/
+DerivedData/
+Payload/
+*.ipa
+*.xcarchive
+
+# macOS / Xcode
+.DS_Store
+xcuserdata/
+*.xcuserstate
+
+# Python
+__pycache__/
+*.pyc
