@@ -172,6 +172,8 @@
 
 > 如果报「此 Apple ID 尚未在 iTunes Store 使用过」，是**新注册小号没激活商店**，按第七节 FAQ 走一次「检查 / Review」即可；电脑 iTunes 本身不需要登录。
 
+> ⚠️ **点了 Install AltStore 后「没看到进度」**：多半不是卡住，而是 AltServer 弹出的英文对话框 `Please enter your Apple ID and password.` 被微信 / 资源管理器 / 聊天窗口挡住了。按 **Alt+Tab** 找到它，输入账号密码（双重认证的 6 位验证码框同样可能被挡）。**只有输完账号，AltServer 才会开始下载 AltStore.ipa，这时才有进度**；访问境外站点慢，可能要等 1–3 分钟。成功标志是托盘提示 `Installation Succeeded`、手机桌面出现 AltStore 图标。详见第七节 FAQ。
+
 ### 安装 App（两条路，推荐 A）
 
 **A · 经 AltStore 安装（可自动续签，推荐）**
@@ -297,6 +299,27 @@ MaskApp/
 「无」不显示、或点「检查」一直转圈：换网络（手机流量，别挂代理）、到 <https://account.apple.com> 确认邮箱已验证、或用浏览器登录 <https://music.apple.com> 同意条款后再试。中国大陆账号通常可选「无」；若 Apple 坚持要支付方式，可临时绑卡，激活后再删除。
 
 > 切到小号后，手机 App Store 下载/更新 App 会用小号，需要时切回主号即可；iCloud、照片、通讯录完全不受影响。
+
+**Q：点了 Install AltStore 完全没反应、看不到进度？**
+
+先判断卡在哪一步。本机（2026-11-17）实测到的典型状态：
+
+| 检查项 | 正常时的表现 | 说明 |
+| --- | --- | --- |
+| 设备管理器 | `USB\VID_05AC&PID_12A8` + `Apple iPhone`（WPD）状态 OK | USB 与信任都没问题 |
+| 配对文件 | `C:\ProgramData\Apple\Lockdown\*.plist` 有当天记录 | 手机已点过「信任此电脑」 |
+| `Apple Mobile Device Service` | Running | usbmuxd 通道可用 |
+| AltServer TCP 连接 | 到 `127.0.0.1:27015` 有 Established 连接 | 它正在和 iPhone 通信 |
+| 新下载的 `.ipa` | **没有** | 还没走到下载 AltStore.ipa，即停在登录框 |
+
+**最常见原因：登录框被别的窗口挡住了。** AltServer 弹的是标准 Windows 对话框，标题为英文 `Please enter your Apple ID and password.`，没有进度条、也不会有托盘动画，压在微信 / 资源管理器 / 聊天窗口下面时就像「点了没反应」。
+
+1. 按 **Alt+Tab** 找这个标题的窗口，或点任务栏把它切到前面。
+2. 输入用于签名的 Apple ID + 密码；双重认证的 6 位验证码框是另一个弹窗，同样可能被挡。
+3. 输完才开始下载 `AltStore.ipa`、才有进度；境外站点慢，耐心等 1–3 分钟，别重复点菜单。
+4. 成功标志：托盘提示 `Installation Succeeded`，手机桌面出现 AltStore 图标。
+
+若输完密码仍没动静：完全退出 AltServer → 右键「**以管理员身份运行**」→ 重新点 Install AltStore；同时确认小号已按上一条 FAQ 激活商店。若设备管理器里没有 `VID_05AC`，那是 USB 连接问题，回到第三节排障表。
 
 **Q：为什么不直接给我一个能双击安装的 IPA？**
 苹果的签名机制不允许。IPA 必须用你的 Apple ID 证书签名才能装到你的手机上，这一步只能在你的电脑 + 你的账号下完成。云端编译只能产出未签名包。
