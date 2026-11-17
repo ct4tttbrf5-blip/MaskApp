@@ -33,6 +33,13 @@ def lan_ip() -> str:
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def guess_type(self, path: str) -> str:
+        # iTunes registers .ipa as application/x-itunes-ipa on Windows; Safari
+        # may try to open that instead of saving it to the Files app.
+        if path.lower().endswith(".ipa"):
+            return "application/octet-stream"
+        return super().guess_type(path)
+
     def log_message(self, fmt: str, *args) -> None:
         # Keep the console readable; only surface real failures.
         if len(args) >= 2 and str(args[1]).startswith(("4", "5")):
