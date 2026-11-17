@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>电子面膜 3.0 · 安装包下载</title>
+<style>
+  :root{--bg:#F4F6FB;--card:#fff;--line:#E3E7F0;--ink:#1B2138;--muted:#6E7892;--accent:#0F9E82}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);padding:max(24px,env(safe-area-inset-top)) 18px max(32px,env(safe-area-inset-bottom));
+    -webkit-text-size-adjust:100%}
+  .wrap{max-width:520px;margin:0 auto}
+  h1{font-size:20px;font-weight:600;margin-bottom:6px}
+  .sub{font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+  .btn{display:block;text-align:center;background:var(--accent);color:#fff;text-decoration:none;
+    font-size:16px;font-weight:600;padding:15px;border-radius:13px;margin-bottom:12px}
+  .file{font-size:12px;color:var(--muted);text-align:center;word-break:break-all}
+  h2{font-size:13px;font-weight:600;margin-bottom:10px}
+  ol{padding-left:20px;font-size:13px;color:var(--muted);line-height:2}
+  ol b{color:var(--ink);font-weight:600}
+  .warn{background:#FFF6E8;border:1px solid #F3D9A8;border-radius:12px;padding:13px 14px;
+    font-size:12.5px;color:#7A5A20;line-height:1.75}
+  .warn b{display:block;margin-bottom:4px;color:#5C4110}
+  .ok{background:#E7F7F3;border:1px solid #B9E8DC;border-radius:12px;padding:13px 14px;
+    font-size:12.5px;color:#0F6E56;line-height:1.75;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>电子面膜 3.0 · 安装包</h1>
+  <p class="sub">未签名 IPA，需通过手机上的 <b>AltStore</b> 签名安装。此页面只负责把文件送到手机，点下载不会直接装 App。</p>
+
+  <div class="ok"><b>前提</b>电脑上 AltServer 已运行、手机已用「Install AltStore」装好 AltStore 并信任了开发者证书。</div>
+
+  <div class="card">
+    <a class="btn" href="MaskApp-unsigned.ipa" download>下载 MaskApp-unsigned.ipa</a>
+    <div class="file">953 KB · com.dnjswork.maskapp · iOS 16.0+</div>
+  </div>
+
+  <div class="card">
+    <h2>下载后怎么装</h2>
+    <ol>
+      <li>Safari 下载完成后，打开「<b>文件</b>」App → 「下载」文件夹，能看到这个 .ipa。</li>
+      <li>打开 <b>AltStore</b>，用<b>和电脑 AltServer 相同的 Apple ID</b> 登录。</li>
+      <li>底部 <b>My Apps</b> → 左上角 <b>+</b> → 选刚下载的 IPA。</li>
+      <li>等待签名完成，桌面出现「电子面膜」图标即可打开。</li>
+    </ol>
+  </div>
+
+  <div class="warn"><b>注意</b>
+    这个 IPA 是未签名的，直接点击不会有反应，必须经 AltStore 或 AltServer 签名。<br>
+    免费 Apple ID 签名有效期 7 天；通过 AltStore 装的 App 可以在同 WiFi 下自动续签，用 AltServer「Sideload .ipa」直装的则不会自动续签，到期需在电脑上重装一次。<br>
+    电脑要开着、本窗口的服务不能关，且手机与电脑在同一 WiFi。
+  </div>
+</div>
+</body>
+</html>

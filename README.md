@@ -78,7 +78,9 @@
 
 ## 三、装到 iPhone（免费侧载，无需开发者账号）
 
-> **数据线一直认不出设备？** 先按第一节用局域网网页版在手机上看界面；要真正装原生 App 又完全不碰数据线，只能走「开发者账号 + TestFlight」。三条路的取舍见第一节对比表。
+> **本机实测（2026-11-17）：USB 已连上，直接往下做即可。** 设备管理器出现 `USB\VID_05AC&PID_12A8` 与 `Apple iPhone`（WPD，状态 OK），之前 `VID_0000` / Code 43 的失败条目已全部消失；iTunes 12.13.12.3、`Apple Mobile Device Service` 运行中；**AltServer 1.8.4 已安装且正在运行**，手机已点过「信任此电脑」。
+>
+> 数据线再次认不出时：先按第一节用局域网网页版在手机上看界面；要真正装原生 App 又完全不碰数据线，只能走「开发者账号 + TestFlight」。三条路的取舍见第一节对比表。
 
 用的是 AltStore，原理是用你的普通 Apple ID 在电脑上给 IPA 重新签名后安装。
 
@@ -160,12 +162,37 @@
 
 > 免费账号最多同时激活 3 个侧载 App，而 AltStore 自己占 1 个，实际还能装 2 个。若要给多人用或省掉 7 天续签，就得换付费开发者账号 + TestFlight。
 
-### 安装 App
+### 先把 AltStore 装到手机（建立续签机制）
 
-1. 把 `MaskApp-unsigned.ipa` 传到手机（微信文件传输助手、邮件附件、存进「文件」App 都行）。
-2. 打开手机上的 AltStore，用**同一个 Apple ID** 登录。
-3. 底部 `My Apps` → 左上角 `+` → 从文件列表里选这个 IPA。
-4. AltStore 会自动签名并安装，桌面上出现「电子面膜」图标。
+1. **关掉手机上的 VPN / 代理类 App**（小火箭、Clash、Stash 等），这是 AltServer 连不上设备最常见的原因；装完再开。
+2. 点右下角托盘的 **AltServer 菱形图标**（必要时先右键「以管理员身份运行」）→ **Install AltStore** → 选你的 iPhone → 输入用于签名的 Apple ID 和密码（双重认证会弹 6 位验证码）。
+3. 手机「设置 → 通用 → VPN 与设备管理」→ 点该 Apple ID → **信任**。
+4. iOS 16+ 若提示，去「设置 → 隐私与安全性 → **开发者模式**」打开并重启。
+5. 打开 AltStore，用**同一个 Apple ID** 登录。
+
+> 如果报「此 Apple ID 尚未在 iTunes Store 使用过」，是**新注册小号没激活商店**，按第七节 FAQ 走一次「检查 / Review」即可；电脑 iTunes 本身不需要登录。
+
+### 安装 App（两条路，推荐 A）
+
+**A · 经 AltStore 安装（可自动续签，推荐）**
+
+1. 把 `build-output/MaskApp-unsigned.ipa` 送到手机，三选一：
+   - **最省事**：双击 `start-ipa-download.bat` → 手机 Safari 打开窗口里打印的 `http://192.168.x.x:8000` → 点下载按钮 → 文件存进「文件」App 的「下载」。
+   - 微信文件传输助手 / 邮件附件发给自己，再「存储到文件」。
+   - iTunes 文件共享、AirDrop 等任意方式。
+2. AltStore → `My Apps` → 左上角 `+` → 选这个 IPA → 自动签名安装，桌面出现图标。
+
+**B · AltServer 直接 Sideload（少两步，但不自动续签）**
+
+在电脑上**按住 Shift 不放**，同时左键点托盘里的 AltServer 图标 → 菜单多出 **Sideload .ipa…** → 文件选择框里 `Ctrl+V` 粘贴下面这个路径回车 → 选 iPhone → 输 Apple ID → 等右下角提示 `Installation Succeeded`：
+
+```
+D:\BaiduSyncdisk\dnjswork\APP\MaskApp\build-output\MaskApp-unsigned.ipa
+```
+
+> **差别要说清楚**：B 方式装的 App **不在 AltStore 的自动续签列表里**，7 天后要重做一次 B；A 方式装的能在同 WiFi 下由 AltServer 自动续签。只想先装上看效果用 B 最快，打算长期用建议走 A（或先用 B、之后再用 A 重装一次）。
+
+**装完打开前**：若提示「未受信任的开发者」，回「设置 → 通用 → VPN 与设备管理」信任该 Apple ID。首次使用会请求蓝牙权限，点允许，否则连不上电子面膜。
 
 ### 关于 7 天续签（免费方案的唯一麻烦）
 

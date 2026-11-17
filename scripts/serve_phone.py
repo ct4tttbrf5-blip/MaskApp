@@ -10,9 +10,13 @@ import functools
 import http.server
 import os
 import socket
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "preview"
+# Default: the interactive web preview. Pass a directory name (e.g.
+# "phone-install") to serve the IPA download page instead.
+PROJECT = Path(__file__).resolve().parents[1]
+ROOT = (PROJECT / sys.argv[1]).resolve() if len(sys.argv) > 1 else PROJECT / "preview"
 PORT = int(os.environ.get("MASKAPP_WEB_PORT", "8000"))
 
 
@@ -48,14 +52,15 @@ def main() -> None:
     handler = functools.partial(Handler, directory=str(ROOT))
 
     print("=" * 62)
-    print("  电子面膜 3.0 · 手机网页版（不需要数据线）")
+    print("  电子面膜 3.0 · 手机局域网服务")
     print("=" * 62)
+    print(f"  服务目录：          {ROOT.name}")
     print(f"  手机 Safari 打开：  {url}")
     print(f"  本机预览：          http://127.0.0.1:{PORT}")
     print()
     print("  1) 手机和电脑连同一个 WiFi")
-    print("  2) Safari 打开上面的地址 → 分享 → 添加到主屏幕")
-    print("  3) 桌面会多出图标，点开即全屏运行，无地址栏")
+    print("  2) 用 Safari 打开上面的地址，按页面提示操作")
+    print("  3) 网页版可点「分享 → 添加到主屏幕」全屏运行")
     print()
     print("  首次运行若弹出 Windows 防火墙提示，请勾选「专用网络」")
     print("  并允许访问；手机打不开多半是防火墙拦了 Python。")
