@@ -85,10 +85,19 @@ struct DeviceView: View {
             Text(device.name)
                 .font(.system(size: 20, weight: .medium))
                 .foregroundColor(.maskText)
+            if let info = bluetooth.deviceInfo {
+                HStack(spacing: 6) {
+                    Image(systemName: info.deviceType.symbol)
+                        .font(.system(size: 11))
+                    Text("\(info.deviceType.title) · \(info.modeChannels.count) 档模式 · 固件 \(info.firmwareVersion)")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(info.deviceType == .laser ? .maskWarning : .maskAccent)
+            }
             HStack(spacing: 18) {
                 if let status = bluetooth.status {
                     Label("电量 \(status.battery)%", systemImage: "battery.75")
-                    Label(status.mode.title, systemImage: "light.max")
+                    Label(status.isRunning ? bluetooth.modeTitle(status.mode) : "待机", systemImage: "light.max")
                 } else {
                     Label("等待设备状态上报", systemImage: "ellipsis")
                 }
@@ -108,7 +117,9 @@ struct DeviceView: View {
                     Image(systemName: "dot.radiowaves.left.and.right")
                         .font(.system(size: 28))
                         .foregroundColor(.maskTextSecondary.opacity(0.55))
-                    Text(bluetooth.isScanning ? "正在搜索…" : "还没有发现设备，点上方按钮开始扫描")
+                    Text(bluetooth.isScanning
+                         ? "正在搜索…"
+                         : "还没有发现设备。面膜关机时不广播，请长按电源键 2 秒开机后再扫描。")
                         .font(.system(size: 13))
                         .foregroundColor(.maskTextSecondary)
                         .multilineTextAlignment(.center)
@@ -153,7 +164,7 @@ struct DeviceView: View {
     private var hintCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             SectionTitle(text: "关于演示模式")
-            Text("当前不会调用真实蓝牙。等拿到固件协议、填好 BLEConfig.swift 后，到「设置」关掉演示模式，即可连接真实设备。")
+            Text("当前不会调用真实蓝牙。可在「设置」里切换演示的是 LED 版还是激光版，用来预览两种机型各自的控制界面。")
                 .font(.system(size: 12))
                 .foregroundColor(.maskTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)

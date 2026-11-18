@@ -1,0 +1,15 @@
+{
+  "name": "电子面膜 3.0 控制端 · 网页演示",
+  "short_name": "面膜控制",
+  "description": "电子面膜 3.0 App 界面演示，可添加到主屏幕全屏运行",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0F1226",
+  "theme_color": "#0F1226",
+  "icons": [
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
