@@ -21,6 +21,12 @@ struct DeviceView: View {
             }
             .background(Color.maskBackground.ignoresSafeArea())
             .navigationTitle("设备")
+            .onAppear {
+                // 进页面就自动扫一次：以前要手动点，且蓝牙刚上电时点了没反应
+                if !bluetooth.demoMode, bluetooth.connected == nil, !bluetooth.isScanning {
+                    bluetooth.startScan()
+                }
+            }
         }
         .navigationViewStyle(.stack)
     }
@@ -118,8 +124,8 @@ struct DeviceView: View {
                         .font(.system(size: 28))
                         .foregroundColor(.maskTextSecondary.opacity(0.55))
                     Text(bluetooth.isScanning
-                         ? "正在搜索…"
-                         : "还没有发现设备。面膜关机时不广播，请长按电源键 2 秒开机后再扫描。")
+                         ? "正在搜索…（面膜关机时不广播，请先长按电源键 2 秒开机）"
+                         : "还没有发现设备。检查：①面膜已长按开机 ②手机「设置→隐私与安全性→蓝牙」允许本 App ③面膜离手机 1 米内")
                         .font(.system(size: 13))
                         .foregroundColor(.maskTextSecondary)
                         .multilineTextAlignment(.center)
@@ -128,22 +134,33 @@ struct DeviceView: View {
                 .padding(.vertical, 30)
                 .maskCard()
             } else {
-                ForEach(bluetooth.devices) { device in
+                ForEach(sortedDevices) { device in
                     Button {
                         bluetooth.connect(device)
                     } label: {
                         HStack(spacing: 12) {
                             ZStack {
                                 Circle()
-                                    .fill(Color.maskAccentBlue.opacity(0.14))
+                                    .fill((isMask(device) ? Color.maskAccent : Color.maskAccentBlue).opacity(0.14))
                                     .frame(width: 38, height: 38)
-                                Image(systemName: "sparkles")
-                                    .foregroundColor(.maskAccentBlue)
+                                Image(systemName: isMask(device) ? "face.smiling" : "sparkles")
+                                    .foregroundColor(isMask(device) ? .maskAccent : .maskAccentBlue)
                             }
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(device.name)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundColor(.maskText)
+                                HStack(spacing: 6) {
+                                    Text(device.name)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundColor(.maskText)
+                                    if isMask(device), !device.isDemo {
+                                        Text("面膜")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundColor(.maskAccent)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.maskAccent.opacity(0.14))
+                                            .clipShape(Capsule())
+                                    }
+                                }
                                 Text(device.isDemo ? "模拟设备 · 点击连接" : "\(device.rssi) dBm · 点击连接")
                                     .font(.system(size: 12))
                                     .foregroundColor(.maskTextSecondary)
@@ -159,6 +176,19 @@ struct DeviceView: View {
                 }
             }
         }
+    }
+
+    /// 名字匹配面膜广播名的排在最前，其余按信号排序，避免在几十个设备里找
+    private var sortedDevices: [DiscoveredDevice] {
+        bluetooth.devices.sorted { a, b in
+            let am = isMask(a), bm = isMask(b)
+            if am != bm { return am }
+            return a.rssi > b.rssi
+        }
+    }
+
+    private func isMask(_ device: DiscoveredDevice) -> Bool {
+        device.name.hasPrefix(BLEConfig.advertisedNamePrefix)
     }
 
     private var hintCard: some View {
