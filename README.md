@@ -2,7 +2,11 @@
 
 一个 SwiftUI 原生 iOS App，通过蓝牙连接并控制电子面膜 3.0：模式切换、档位、护理时长、倒计时自动停止、使用记录。
 
-当前状态：**云端 macOS 编译已通过，未签名安装包在 `build-output/MaskApp-unsigned.ipa`**；BLE 协议仍是占位值，可先用内置演示模式跑通全部界面与交互，不需要真实硬件。
+当前状态：**App 与固件 BLE 协议已对接完毕**（协议 v1，固件 v197）。服务 `0xFFE0` / 写 `0xFFE1` / 通知 `0xFFE2`，连上后由设备上报的 INFO 帧决定界面显示几个模式、几档亮度、几档时长——LED 版 3 档、激光版 2 档，同一份 App 自动适配。
+
+两份固件工程（`电子面膜3.0程序-Cursor - workbuddy-20261117-LED第一次送样` / `…-激光第一次送样`）已用杰理工具链实测编译通过（`make` exit 0，产出 `sdk.elf` / `jl_isd.ufw`），并用预处理探针确认：LED 版 `FM_TOUCH_MODE_COUNT=3`、激光版 `=2`，条件编译分支正确。
+
+未签名安装包仍在 `build-output/MaskApp-unsigned.ipa`（协议对接前的版本，**需重新云端编译才能带上新协议**）。没有硬件时可用内置演示模式，在「设置」里切换演示 LED 版 / 激光版预览两套界面。
 
 工程已初始化为本地 Git 仓库。云端 macOS（Xcode 26.6 / Swift 6.3.3）第 4 次构建成功，已拆包核验：Mach-O 可执行文件、图标资源、`NSBluetoothAlwaysUsageDescription`、`bluetooth-central` 后台模式、最低 iOS 16.0 均完整，且确实未签名（AltStore 重签需要这种形态）。
 
@@ -208,29 +212,74 @@ D:\BaiduSyncdisk\dnjswork\APP\MaskApp\build-output\MaskApp-unsigned.ipa
 
 ---
 
-## 四、接入真实电子面膜 3.0
+## 四、BLE 协议（固件 ↔ App 已对接）
 
-**只需要改一个文件：`MaskApp/BLEConfig.swift`。** 其余代码都不用动。
+协议实现在固件的 `SDK/apps/soundbox/face_mask/face_mask_ble.c`（协议 v1），App 侧对应 `MaskApp/BLEConfig.swift`，两边是同一套定义。
 
-需要填的东西：
+**连接参数**
 
-| 项目 | 说明 |
+| 项目 | 值 |
 | --- | --- |
-| `advertisedNamePrefix` | 设备广播名前缀，用于过滤 |
-| `serviceUUID` / `writeUUID` / `notifyUUID` | 主服务、写特征、通知特征 UUID |
-| `makeFrame` | 帧格式（帧头、长度、校验、帧尾） |
-| `setMode` / `setIntensity` / `setDuration` / `start` / `stop` | 各指令的操作码与数据字节 |
-| `parseStatus` | 设备状态上报的解析规则 |
-| `maxPacketSize` | 单次写入上限，超出会自动分片 |
+| 广播名 | `V3.0-Mask` |
+| 主服务 | `0xFFE0` |
+| 写特征（App → 面膜） | `0xFFE1`（WRITE / WRITE_NO_RSP） |
+| 通知特征（面膜 → App） | `0xFFE2`（NOTIFY） |
+| 固件要求 | **v197 及以上**（`FM_FW_VER`） |
 
-**不知道 UUID 怎么办**：在「设置」里关掉演示模式、打开「显示周边全部 BLE 设备」，回「设备」页扫描并连接真机。App 会把发现的**全部服务 UUID 和特征 UUID**打印到「设置 → 蓝牙调试日志」里，照抄进 `BLEConfig.swift` 即可。日志同时会显示每次下发的原始十六进制指令和收到的状态数据，方便和固件逐字节对。
+**帧格式**
 
-在拿到准确协议前，代码里已经做了两处兜底，方便首次调试：
+```
+AA | OP | LEN | PAYLOAD[LEN] | SUM | 55
+SUM = (AA + OP + LEN + 所有 PAYLOAD 字节) & 0xFF
+```
 
-- 占位 UUID 匹配不上时，会**自动挑一个可写特征和一个通知特征**临时连通，并记进日志；
-- 状态数据格式不匹配时只记日志、不崩溃，界面显示「等待状态上报」。
+**下行指令（App → 面膜）**
 
-**关于 LED / 激光模式**：按项目约定，固件统一只按 LED 模式编译一遍。如果首版 App 不需要激光入口，把 `BLEConfig.showLaserMode` 改成 `false`，界面会自动只剩一个模式卡片，不用改任何界面代码。
+| OP | 名称 | 载荷 | 说明 |
+| --- | --- | --- | --- |
+| `0x01` | SET_MODE | `[mode]` | 1…设备上报的模式数 |
+| `0x02` | SET_BRIGHT | `[level]` | 0=50% / 1=70% / 2=90% |
+| `0x03` | SET_TIME | `[level]` | 1=5min / 2=10min / 3=15min |
+| `0x04` | START | `[mode]?` | 不带参数则用当前模式 |
+| `0x05` | STOP | 无 | 幂等 |
+| `0x06` | QUERY_STATUS | 无 | 立即回一帧 STATUS |
+| `0x07` | QUERY_INFO | 无 | 立即回一帧 INFO |
+| `0x08` | SET_ALL | `[mode][bright][time]` | 一次设全并启动，App 起护理就用这条 |
+
+**上行数据（面膜 → App）**
+
+| OP | 名称 | 载荷 |
+| --- | --- | --- |
+| `0x81` | STATUS | `[mode][bright][剩余秒高][剩余秒低][电量%][flags]` |
+| `0x82` | INFO | `[设备类型][模式数][亮度档数][时长档数][固件版本][协议版本][各模式通道掩码…][各时长分钟数…]` |
+| `0x83` | ACK | `[op][code]`，code：0=成功 1=参数超范围 2=状态不允许 3=未知命令 |
+
+`flags` 位定义：bit0 运行中 / bit1 充电中 / bit2 已充满 / bit3 低电量 / bit4 语音识别开 / bit5 已开机。
+
+设备状态**变化即推送**，无变化每 3 秒兜底一帧，所以按键改了档位，App 界面会立刻跟着变。
+
+**LED 版 / 激光版如何自动切换**
+
+App 不在代码里写死"有几个模式"，连上后先收 INFO 帧，按设备上报的能力生成界面：
+
+| | LED 版 | 激光版 |
+| --- | --- | --- |
+| 设备类型字节 | `1` | `2` |
+| 模式数 | 3 | 2 |
+| 模式组合 | 红+850+Q5 / 蓝+Q5 / 全开 | 红+850+1064 / 蓝+1064 |
+| 亮度 / 时长 | 3 档 × 3 档 | 3 档 × 3 档 |
+
+两版固件除了 `face_mask_config.h` 顶上那两行 `FM_PRODUCT_VERSION` 开关外**代码完全相同**，所以烧 LED 版 App 就显示 3 张模式卡，烧激光版就显示 2 张，各自只激活本机支持的功能。
+
+**冲突时以设备为准**
+
+- 模式数、亮度档数、时长表全部取设备上报值，App 不会显示设备没有的选项；
+- 固件对越界参数返回 ACK code 1，对充电中/关机状态的命令返回 code 2，App 会把原因提示出来；
+- 光疗到点设备自动关机，App 收到最后一帧 `running=0` 后断连，不做挽留。
+
+**调试**：「设置 → 蓝牙调试日志」里能看到每次收发的原始十六进制，可以逐字节和固件串口日志（`[FM_BLE]` 开头）对照。
+
+**注意**：面膜关机时不开蓝牙、不广播。扫描前先长按电源键 2 秒开机。
 
 ---
 
@@ -254,7 +303,7 @@ MaskApp/
     ├── MaskAppApp.swift            入口
     ├── RootView.swift              四个 Tab
     ├── Theme.swift                 配色与卡片样式
-    ├── BLEConfig.swift             ★ 唯一需要按固件协议修改的文件
+    ├── BLEConfig.swift             ★ 协议定义（与固件 face_mask_ble.c 一一对应）
     ├── BluetoothManager.swift      CoreBluetooth 扫描/连接/重连/收发/演示模式
     ├── SessionController.swift     护理会话、倒计时、自动停止、记录持久化
     ├── DeviceView.swift            设备页

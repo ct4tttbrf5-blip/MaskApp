@@ -13,9 +13,14 @@ struct SessionRecord: Codable, Identifiable, Equatable {
 
 final class SessionController: ObservableObject {
 
-    @Published var selectedMode: BLEConfig.Mode = .led
-    @Published var intensity: Int = 3
-    @Published var durationMinutes: Int = 15
+    // MARK: 用户选择（取值受设备能力约束）
+
+    /// 模式序号，1 基，与固件 mode 参数一致
+    @Published var selectedModeIndex: Int = 1
+    /// 亮度档，0 基（0=50% 1=70% 2=90%）
+    @Published var brightLevel: Int = 0
+    /// 时长档，1 基，对应设备上报的时长表
+    @Published var durationLevel: Int = 1
 
     @Published private(set) var remainingSeconds: Int = 0
     @Published private(set) var isRunning = false
@@ -31,17 +36,40 @@ final class SessionController: ObservableObject {
     init(bluetooth: BluetoothManager) {
         self.bluetooth = bluetooth
         loadRecords()
+
         bluetooth.$status
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in self?.applyDeviceStatus(status) }
             .store(in: &cancellables)
+
+        // 设备版本一变（连上另一台机器）就把选择收进新设备的合法范围
+        bluetooth.$deviceInfo
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] info in self?.adoptDeviceLimits(info) }
+            .store(in: &cancellables)
+
+        bluetooth.$lastAck
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] ack in
+                guard let self = self, !ack.isOK else { return }
+                self.notice = "设备未执行：\(ack.reason)"
+                if self.isRunning { self.finish(completed: false) }
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: 派生显示
 
+    var durationMinutes: Int {
+        let list = bluetooth.durations
+        guard list.indices.contains(durationLevel - 1) else { return 0 }
+        return list[durationLevel - 1]
+    }
+
     var progress: Double {
-        let total = Double(durationMinutes * 60)
+        let total = Double(max(1, durationMinutes) * 60)
         guard total > 0 else { return 0 }
         return min(1.0, max(0.0, 1.0 - Double(remainingSeconds) / total))
     }
@@ -56,6 +84,31 @@ final class SessionController: ObservableObject {
         records.reduce(0) { $0 + $1.actualSeconds } / 60
     }
 
+    var brightText: String {
+        let percents = BLEConfig.brightPercents
+        return percents.indices.contains(brightLevel) ? "\(percents[brightLevel])%" : "第 \(brightLevel + 1) 档"
+    }
+
+    // MARK: 对齐设备能力
+
+    /// 以设备为准：模式数、亮度档数、时长表都按 INFO 上报裁剪
+    private func adoptDeviceLimits(_ info: BLEConfig.DeviceInfo?) {
+        guard let info = info else { return }
+        let modeCount = max(1, info.modeChannels.count)
+        if selectedModeIndex > modeCount { selectedModeIndex = modeCount }
+        if selectedModeIndex < 1 { selectedModeIndex = 1 }
+
+        let brightLimit = max(1, info.brightCount)
+        if brightLevel >= brightLimit { brightLevel = brightLimit - 1 }
+        if brightLevel < 0 { brightLevel = 0 }
+
+        let timeCount = max(1, info.durations.count)
+        if durationLevel > timeCount { durationLevel = timeCount }
+        if durationLevel < 1 { durationLevel = 1 }
+
+        notice = nil
+    }
+
     // MARK: 护理控制
 
     func start() {
@@ -63,13 +116,18 @@ final class SessionController: ObservableObject {
             notice = "请先在「设备」页连接电子面膜"
             return
         }
+        guard bluetooth.deviceInfo != nil else {
+            notice = "还在识别设备版本，请稍候再开始"
+            return
+        }
         guard !isRunning else { return }
 
-        // 顺序与固件保持一致：模式 → 档位 → 时长 → 启动
-        bluetooth.applyMode(selectedMode)
-        bluetooth.applyIntensity(intensity)
-        bluetooth.applyDuration(durationMinutes)
-        bluetooth.startTreatment()
+        // 一条 SET_ALL 下发，设备侧顺序执行：亮度 → 定时 → 启动
+        bluetooth.startTherapy(
+            mode: selectedModeIndex,
+            bright: brightLevel,
+            timeLevel: durationLevel
+        )
 
         remainingSeconds = durationMinutes * 60
         startedAt = Date()
@@ -96,8 +154,8 @@ final class SessionController: ObservableObject {
         let record = SessionRecord(
             id: UUID(),
             date: Date(),
-            modeTitle: selectedMode.title,
-            intensity: intensity,
+            modeTitle: bluetooth.modeTitle(selectedModeIndex),
+            intensity: brightLevel + 1,
             plannedMinutes: durationMinutes,
             actualSeconds: elapsed,
             completed: completed
@@ -111,7 +169,19 @@ final class SessionController: ObservableObject {
     }
 
     /// 设备端主动停止时，本地随之收尾；设备上报的剩余时间也作为校准来源。
+    /// 设备到点会自动关机，此时会先收到一帧 running=0，再断连。
     private func applyDeviceStatus(_ status: BLEConfig.DeviceStatus) {
+        // 设备被按键改了模式/亮度/时长，界面跟着走（以设备为准）
+        if !isRunning {
+            if status.mode >= 1, status.mode != selectedModeIndex,
+               status.mode <= max(1, bluetooth.modeCount) {
+                selectedModeIndex = status.mode
+            }
+            if status.bright != brightLevel, status.bright < max(1, bluetooth.brightCount) {
+                brightLevel = status.bright
+            }
+        }
+
         guard isRunning else { return }
         if !status.isRunning {
             finish(completed: false)
@@ -126,9 +196,9 @@ final class SessionController: ObservableObject {
     /// 用户在设置里改动参数后，立即同步到设备
     func syncSettings() {
         guard bluetooth.connected != nil, !isRunning else { return }
-        bluetooth.applyMode(selectedMode)
-        bluetooth.applyIntensity(intensity)
-        bluetooth.applyDuration(durationMinutes)
+        bluetooth.applyMode(selectedModeIndex)
+        bluetooth.applyBright(brightLevel)
+        bluetooth.applyTime(durationLevel)
     }
 
     // MARK: 记录持久化

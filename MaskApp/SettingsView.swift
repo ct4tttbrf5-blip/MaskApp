@@ -39,6 +39,19 @@ struct SettingsView: View {
             }
             .tint(.maskAccent)
 
+            if bluetooth.demoMode {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("演示设备版本")
+                        .font(.system(size: 12))
+                        .foregroundColor(.maskTextSecondary)
+                    Picker("演示设备版本", selection: $bluetooth.demoDeviceType) {
+                        Text("LED 版（3 档）").tag(BLEConfig.DeviceType.led)
+                        Text("激光版（2 档）").tag(BLEConfig.DeviceType.laser)
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
             Divider().background(Color.maskBorder)
 
             Toggle(isOn: $bluetooth.showAllDevices) {
@@ -58,14 +71,18 @@ struct SettingsView: View {
 
     private var protocolCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionTitle(text: "接入真实设备前")
-            Text("打开工程里的 BLEConfig.swift，把固件实际的服务 UUID、写特征 / 通知特征 UUID 和指令字节填进去，其余代码无需改动。")
+            SectionTitle(text: "设备协议")
+            Text("服务 0xFFE0 · 写 0xFFE1 · 通知 0xFFE2，帧格式 AA/OP/LEN/PAYLOAD/SUM/55。连上后先收 INFO 帧，按设备上报的模式数量、亮度档数、时长表生成界面。")
                 .font(.system(size: 12))
                 .foregroundColor(.maskTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("提示：关闭演示模式后扫描真机，下方调试日志会列出设备全部服务与特征 UUID，照抄到配置文件即可。")
+            Text("所以同一份 App：接 LED 机显示 3 档模式，接激光机显示 2 档模式；参数上限一律以设备为准，App 不会下发超范围的值。")
                 .font(.system(size: 12))
                 .foregroundColor(.maskAccent)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("固件需 v197 及以上（face_mask_ble.c 协议 v1）。面膜关机状态下不广播，扫描前请长按电源键 2 秒开机。")
+                .font(.system(size: 11))
+                .foregroundColor(.maskTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .maskCard()
@@ -112,9 +129,15 @@ struct SettingsView: View {
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "关于")
-            Text("电子面膜 3.0 控制端 · v1.0.0")
+            Text("电子面膜 3.0 控制端 · v1.1.0")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.maskText)
+            if let info = bluetooth.deviceInfo {
+                Text("当前设备：\(info.deviceType.title) · \(info.modeChannels.count) 档模式 · 固件 \(info.firmwareVersion)")
+                    .font(.system(size: 12))
+                    .foregroundColor(.maskTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text("本机通过 AltStore 侧载安装：免费 Apple ID 签名有效期 7 天，到期前需连电脑续签一次。若后续改用开发者账号 TestFlight 分发，则无此限制。")
                 .font(.system(size: 12))
                 .foregroundColor(.maskTextSecondary)

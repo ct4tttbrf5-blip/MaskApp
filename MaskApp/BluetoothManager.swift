@@ -22,6 +22,9 @@ final class BluetoothManager: NSObject, ObservableObject,
     @Published private(set) var devices: [DiscoveredDevice] = []
     @Published private(set) var connected: DiscoveredDevice?
     @Published private(set) var status: BLEConfig.DeviceStatus?
+    /// 设备版本与能力，连上后由固件 INFO 帧决定；nil 表示还没识别出来
+    @Published private(set) var deviceInfo: BLEConfig.DeviceInfo?
+    @Published private(set) var lastAck: BLEConfig.Ack?
     @Published private(set) var isScanning = false
     @Published private(set) var logs: [String] = []
 
@@ -34,11 +37,23 @@ final class BluetoothManager: NSObject, ObservableObject,
         }
     }
 
+    /// 演示时假装连的是哪一版，方便没有激光样机时先看界面
+    @Published var demoDeviceType: BLEConfig.DeviceType {
+        didSet {
+            UserDefaults.standard.set(Int(demoDeviceType.rawValue), forKey: Self.demoTypeKey)
+            guard demoMode, connected != nil else { return }
+            deviceInfo = BLEConfig.demoInfo(type: demoDeviceType)
+            demoModeIndex = 1
+            log("演示设备切换为 \(demoDeviceType.title)")
+            publishDemoStatus()
+        }
+    }
+
     /// 协议未确定时默认显示周边全部 BLE 设备，方便先找到设备名和 UUID。
-    /// 确认后可关掉，仅显示 BLEConfig.advertisedNamePrefix 开头的设备。
     @Published var showAllDevices: Bool = true
 
     private static let demoKey = "maskapp.demoMode"
+    private static let demoTypeKey = "maskapp.demoDeviceType"
 
     // MARK: 私有状态
 
@@ -49,17 +64,41 @@ final class BluetoothManager: NSObject, ObservableObject,
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var reconnectID: UUID?
 
+    /// 收包缓冲：粘包/半包都在这里拼
+    private var rxBuffer = Data()
+    private var infoRetryCount = 0
+
     private var demoTimer: Timer?
     private var demoRemaining = 0
     private var demoRunning = false
-    private var demoModeValue: BLEConfig.Mode = .led
-    private var demoIntensity = 3
+    private var demoModeIndex = 1
+    private var demoBright = 0
 
     override init() {
         demoMode = UserDefaults.standard.bool(forKey: Self.demoKey)
+        let storedType = UserDefaults.standard.integer(forKey: Self.demoTypeKey)
+        demoDeviceType = BLEConfig.DeviceType(rawValue: UInt8(storedType)) ?? .led
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
     }
+
+    // MARK: 便利取值
+
+    /// 当前设备的模式列表（未识别版本时为空）
+    var modes: [BLEConfig.TherapyMode] { deviceInfo?.modes ?? [] }
+
+    var modeCount: Int { deviceInfo?.modeChannels.count ?? 0 }
+
+    var durations: [Int] { deviceInfo?.durations ?? [] }
+
+    var brightCount: Int { deviceInfo?.brightCount ?? 0 }
+
+    func modeTitle(_ index: Int) -> String {
+        modes.first(where: { $0.id == index })?.title ?? "模式 \(index)"
+    }
+
+    /// 设备识别是否完成（决定控制页能不能点）
+    var isDeviceReady: Bool { connected != nil && deviceInfo != nil }
 
     // MARK: 扫描
 
@@ -79,7 +118,7 @@ final class BluetoothManager: NSObject, ObservableObject,
             withServices: BLEConfig.scanServices,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
-        log("开始扫描周边 BLE 设备")
+        log("开始扫描（面膜需长按电源键 2 秒开机后才会广播）")
     }
 
     func stopScan() {
@@ -88,16 +127,17 @@ final class BluetoothManager: NSObject, ObservableObject,
     }
 
     private func startDemoScan() {
+        let suffix = demoDeviceType == .led ? "LED 版（演示）" : "激光版（演示）"
         devices = [
             DiscoveredDevice(
                 id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
-                name: "DN-MASK-3.0（演示）",
+                name: "V3.0-Mask \(suffix)",
                 rssi: -52,
                 isDemo: true
             ),
             DiscoveredDevice(
                 id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
-                name: "DN-MASK-3.0-2（演示）",
+                name: "V3.0-Mask-2（演示）",
                 rssi: -74,
                 isDemo: true
             )
@@ -116,9 +156,12 @@ final class BluetoothManager: NSObject, ObservableObject,
         if demoMode {
             connected = device
             status = nil
+            deviceInfo = BLEConfig.demoInfo(type: demoDeviceType)
             demoRemaining = 0
             demoRunning = false
-            log("已连接 \(device.name)")
+            demoModeIndex = 1
+            demoBright = 0
+            log("已连接 \(device.name)，识别为 \(demoDeviceType.title)")
             startDemoLoop()
             publishDemoStatus()
             return
@@ -151,25 +194,38 @@ final class BluetoothManager: NSObject, ObservableObject,
         notifyCharacteristic = nil
         connected = nil
         status = nil
+        deviceInfo = nil
+        lastAck = nil
+        rxBuffer.removeAll()
+        infoRetryCount = 0
         devices.removeAll()
     }
 
     // MARK: 指令下发
 
-    func applyMode(_ mode: BLEConfig.Mode) {
-        send(BLEConfig.setMode(mode), label: "设置模式 \(mode.title)")
+    func applyMode(_ index: Int) {
+        send(BLEConfig.setMode(index), label: "设置\(modeTitle(index))")
     }
 
-    func applyIntensity(_ level: Int) {
-        send(BLEConfig.setIntensity(level), label: "设置档位 \(level)")
+    func applyBright(_ level: Int) {
+        let percent = BLEConfig.brightPercents.indices.contains(level)
+            ? "\(BLEConfig.brightPercents[level])%"
+            : "第 \(level + 1) 档"
+        send(BLEConfig.setBright(level), label: "设置亮度 \(percent)")
     }
 
-    func applyDuration(_ minutes: Int) {
-        send(BLEConfig.setDuration(minutes), label: "设置时长 \(minutes) 分钟")
+    /// level 从 1 开始，对应设备上报的时长表下标
+    func applyTime(_ level: Int) {
+        let minutes = durations.indices.contains(level - 1) ? "\(durations[level - 1]) 分钟" : "第 \(level) 档"
+        send(BLEConfig.setTime(level), label: "设置时长 \(minutes)")
     }
 
-    func startTreatment() {
-        send(BLEConfig.start(), label: "开始护理")
+    /// 一次设全并启动：模式 / 亮度 / 定时
+    func startTherapy(mode: Int, bright: Int, timeLevel: Int) {
+        send(
+            BLEConfig.setAll(mode: mode, bright: bright, timeLevel: timeLevel),
+            label: "开始护理（模式 \(mode) / 亮度 \(bright + 1) / 时长档 \(timeLevel)）"
+        )
     }
 
     func stopTreatment() {
@@ -178,6 +234,33 @@ final class BluetoothManager: NSObject, ObservableObject,
 
     func requestStatus() {
         send(BLEConfig.queryStatus(), label: "查询状态")
+    }
+
+    func requestInfo() {
+        send(BLEConfig.queryInfo(), label: "查询设备版本")
+    }
+
+    /// 连上后主动握手：拿不到 INFO 就重试 3 次，然后提示用户
+    func beginHandshake() {
+        guard !demoMode else { return }
+        infoRetryCount = 0
+        requestInfoWithRetry()
+    }
+
+    private func requestInfoWithRetry() {
+        guard !demoMode, peripheral != nil, deviceInfo == nil else { return }
+        guard infoRetryCount < 3 else {
+            log("设备未回应版本查询，请确认固件已烧入 BLE 协议（v197 及以上）")
+            return
+        }
+        infoRetryCount += 1
+        requestInfo()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            guard let self = self else { return }
+            if self.deviceInfo == nil, self.peripheral != nil {
+                self.requestInfoWithRetry()
+            }
+        }
     }
 
     func send(_ data: Data, label: String) {
@@ -245,13 +328,14 @@ final class BluetoothManager: NSObject, ObservableObject,
         connected = devices.first(where: { $0.id == peripheral.identifier })
             ?? DiscoveredDevice(
                 id: peripheral.identifier,
-                name: peripheral.name ?? "电子面膜",
+                name: peripheral.name ?? BLEConfig.advertisedNamePrefix,
                 rssi: 0,
                 isDemo: false
             )
-        log("已连接 \(connected?.name ?? "设备")")
-        // 发现全部服务并打印 UUID，方便按真实协议填写 BLEConfig.swift
-        peripheral.discoverServices(nil)
+        deviceInfo = nil
+        rxBuffer.removeAll()
+        log("已连接 \(connected?.name ?? "设备")，正在读取设备版本…")
+        peripheral.discoverServices([BLEConfig.serviceUUID])
     }
 
     func centralManager(
@@ -270,6 +354,7 @@ final class BluetoothManager: NSObject, ObservableObject,
         log("连接断开：\(error?.localizedDescription ?? "主动断开")")
         connected = nil
         status = nil
+        deviceInfo = nil
         if let id = reconnectID, let target = peripherals[id], central.state == .poweredOn {
             log("尝试自动重连…")
             central.connect(target, options: nil)
@@ -281,7 +366,10 @@ final class BluetoothManager: NSObject, ObservableObject,
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error = error { log("服务发现失败：\(error.localizedDescription)") }
         let services = peripheral.services ?? []
-        if services.isEmpty { log("未发现任何服务，请确认设备是否支持 BLE") }
+        if services.isEmpty {
+            log("未发现 0xFFE0 服务，请确认烧的是带 BLE 协议的固件")
+            return
+        }
         for service in services {
             log("服务 \(service.uuid.uuidString)")
             peripheral.discoverCharacteristics(nil, for: service)
@@ -300,28 +388,13 @@ final class BluetoothManager: NSObject, ObservableObject,
 
             if characteristic.uuid == BLEConfig.writeUUID {
                 writeCharacteristic = characteristic
-                log("  → 已匹配写特征")
+                log("  → 已匹配写特征 0xFFE1")
             }
             if characteristic.uuid == BLEConfig.notifyUUID {
                 notifyCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
-                log("  → 已匹配通知特征")
+                log("  → 已匹配通知特征 0xFFE2")
             }
-        }
-
-        // 占位 UUID 尚未按真实固件修改时，自动挑一个可用的特征，
-        // 让首次调试也能连通。确认协议后把 UUID 填进 BLEConfig 即可。
-        let all = (peripheral.services ?? []).flatMap { $0.characteristics ?? [] }
-        if writeCharacteristic == nil,
-           let fallback = all.first(where: { $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse) }) {
-            writeCharacteristic = fallback
-            log("  → 未匹配写特征，临时自动选用 \(fallback.uuid.uuidString)")
-        }
-        if notifyCharacteristic == nil,
-           let fallback = all.first(where: { $0.properties.contains(.notify) }) {
-            notifyCharacteristic = fallback
-            peripheral.setNotifyValue(true, for: fallback)
-            log("  → 未匹配通知特征，临时自动选用 \(fallback.uuid.uuidString)")
         }
     }
 
@@ -330,8 +403,13 @@ final class BluetoothManager: NSObject, ObservableObject,
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        if let error = error { log("订阅通知失败：\(error.localizedDescription)") }
-        else { log("已订阅 \(characteristic.uuid.uuidString) 通知") }
+        if let error = error {
+            log("订阅通知失败：\(error.localizedDescription)")
+            return
+        }
+        log("已订阅 \(characteristic.uuid.uuidString) 通知")
+        // 通道打通了，立刻握手识别是 LED 版还是激光版
+        beginHandshake()
     }
 
     func peripheral(
@@ -341,11 +419,47 @@ final class BluetoothManager: NSObject, ObservableObject,
     ) {
         if let error = error { log("读取失败：\(error.localizedDescription)") }
         let data = characteristic.value ?? Data()
-        log("← 状态数据 \(hex(data))")
-        if let parsed = BLEConfig.parseStatus(data) {
-            status = parsed
-        } else {
-            log("状态格式不匹配，请按固件协议调整 BLEConfig.parseStatus")
+        guard !data.isEmpty else { return }
+
+        rxBuffer.append(data)
+        let frames = BLEConfig.extractFrames(from: &rxBuffer)
+        for frame in frames {
+            handle(frame: frame)
+        }
+    }
+
+    private func handle(frame: Data) {
+        let bytes = [UInt8](frame)
+        guard bytes.count >= 2 else { return }
+
+        switch bytes[1] {
+        case BLEConfig.Opcode.statusReport:
+            if let parsed = BLEConfig.parseStatus(frame) {
+                status = parsed
+            } else {
+                log("STATUS 帧格式不符：\(hex(frame))")
+            }
+
+        case BLEConfig.Opcode.infoReport:
+            if let info = BLEConfig.parseInfo(frame) {
+                deviceInfo = info
+                infoRetryCount = 0
+                log("设备识别完成：\(info.summary)  模式表 \(info.modeChannels.map { String(format: "0x%02X", $0) })")
+                requestStatus()
+            } else {
+                log("INFO 帧格式不符：\(hex(frame))")
+            }
+
+        case BLEConfig.Opcode.ack:
+            if let ack = BLEConfig.parseAck(frame) {
+                lastAck = ack
+                if !ack.isOK {
+                    log("设备拒绝命令 0x\(String(format: "%02X", ack.opcode))：\(ack.reason)")
+                }
+            }
+
+        default:
+            log("← 未知帧 \(hex(frame))")
         }
     }
 
@@ -369,30 +483,57 @@ final class BluetoothManager: NSObject, ObservableObject,
     }
 
     private func publishDemoStatus() {
+        var flags: UInt8 = 0x20                       // powered
+        if demoRunning { flags |= 0x01 }
         let frame = BLEConfig.demoStatusFrame(
-            mode: demoModeValue,
-            intensity: demoIntensity,
+            mode: demoModeIndex,
+            bright: demoBright,
             remainingSeconds: demoRemaining,
             battery: 86,
-            isRunning: demoRunning
+            flags: flags
         )
         status = BLEConfig.parseStatus(frame)
     }
 
     private func handleDemoCommand(_ data: Data) {
         let b = [UInt8](data)
-        guard b.count >= 2 else { return }
+        guard b.count >= 5 else { return }
+        // 帧结构 AA OP LEN PAYLOAD SUM 55，负载就是去掉头 3 字节和尾 2 字节
+        let payload: [UInt8] = (3..<(b.count - 2)).map { b[$0] }
+
         switch b[1] {
         case BLEConfig.Opcode.setMode:
-            if b.count > 3, let m = BLEConfig.Mode(rawValue: b[3]) { demoModeValue = m }
-        case BLEConfig.Opcode.setIntensity:
-            if b.count > 3 { demoIntensity = Int(b[3]) }
-        case BLEConfig.Opcode.setDuration:
-            if b.count > 4 { demoRemaining = (Int(b[3]) << 8) | Int(b[4]) }
+            if let first = payload.first, first >= 1, Int(first) <= modeCount {
+                demoModeIndex = Int(first)
+            }
+        case BLEConfig.Opcode.setBright:
+            if let first = payload.first, Int(first) < max(1, brightCount) {
+                demoBright = Int(first)
+            }
+        case BLEConfig.Opcode.setTime:
+            if let first = payload.first, first >= 1, Int(first) <= durations.count {
+                demoRemaining = durations[Int(first) - 1] * 60
+            }
         case BLEConfig.Opcode.start:
+            if let first = payload.first, first >= 1, Int(first) <= modeCount {
+                demoModeIndex = Int(first)
+            }
             demoRunning = true
+            if demoRemaining == 0, durations.indices.contains(0) {
+                demoRemaining = durations[0] * 60
+            }
         case BLEConfig.Opcode.stop:
             demoRunning = false
+            demoRemaining = 0
+        case BLEConfig.Opcode.setAll:
+            if payload.count >= 3 {
+                if payload[0] >= 1, Int(payload[0]) <= modeCount { demoModeIndex = Int(payload[0]) }
+                if Int(payload[1]) < max(1, brightCount) { demoBright = Int(payload[1]) }
+                if payload[2] >= 1, Int(payload[2]) <= durations.count {
+                    demoRemaining = durations[Int(payload[2]) - 1] * 60
+                }
+                demoRunning = true
+            }
         default:
             break
         }
