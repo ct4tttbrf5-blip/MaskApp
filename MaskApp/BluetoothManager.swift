@@ -68,6 +68,15 @@ final class BluetoothManager: NSObject, ObservableObject,
     private var rxBuffer = Data()
     private var infoRetryCount = 0
 
+    /// 蓝牙还没就绪时点了扫描：等 poweredOn 回调里补扫，避免"点了没反应"
+    private var pendingScan = false
+    /// 连接尝试次数，用于失败后自动重试一次（JL 方案刚开广播时第一次常失败）
+    private var connectAttempts = 0
+    /// 每次连接一个令牌，防止过期的超时回调把新连接取消掉
+    private var connectToken = UUID()
+    /// 服务发现失败后重连过一次就不再重试，避免死循环
+    private var serviceRetryUsed = false
+
     private var demoTimer: Timer?
     private var demoRemaining = 0
     private var demoRunning = false
@@ -103,15 +112,17 @@ final class BluetoothManager: NSObject, ObservableObject,
     // MARK: 扫描
 
     func startScan() {
-        guard !isScanning else { return }
+        if isScanning { return }
         if demoMode {
             startDemoScan()
             return
         }
         guard central.state == .poweredOn else {
-            log("蓝牙未就绪，无法扫描：\(stateText(central.state))")
+            pendingScan = true
+            log("蓝牙未就绪（\(stateText(central.state))），就绪后自动开始扫描")
             return
         }
+        pendingScan = false
         devices.removeAll()
         isScanning = true
         central.scanForPeripherals(
@@ -119,6 +130,12 @@ final class BluetoothManager: NSObject, ObservableObject,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
         log("开始扫描（面膜需长按电源键 2 秒开机后才会广播）")
+
+        // 扫 12 秒一台都没看到，给一句可执行的提示，省得盯着空列表猜
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self = self, self.isScanning, self.devices.isEmpty else { return }
+            self.log("扫描 12 秒未发现任何设备：①面膜是否长按开机 ②手机设置→隐私与安全性→蓝牙 是否允许本 App ③把面膜靠近手机再试")
+        }
     }
 
     func stopScan() {
@@ -166,14 +183,37 @@ final class BluetoothManager: NSObject, ObservableObject,
             publishDemoStatus()
             return
         }
-        guard let target = peripherals[device.id], central.state == .poweredOn else {
+        guard peripherals[device.id] != nil, central.state == .poweredOn else {
             log("连接失败：找不到设备或蓝牙未就绪")
             return
         }
+        connectAttempts = 0
+        serviceRetryUsed = false
         reconnectID = device.id
+        startConnect(device.id)
+    }
+
+    /// 真正发起连接 + 超时保护。
+    /// iOS 的 connect 没有超时参数，设备不在广播范围时会一直挂着，
+    /// 界面上就表现为"点了一直转圈、也不报错"。
+    private func startConnect(_ id: UUID) {
+        guard let target = peripherals[id], central.state == .poweredOn else { return }
+        connectAttempts += 1
+        let token = UUID()
+        connectToken = token
         target.delegate = self
-        log("正在连接 \(device.name)…")
+        log("正在连接…（第 \(connectAttempts) 次）")
         central.connect(target, options: nil)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self = self,
+                  self.connectToken == token,
+                  self.peripheral?.state != .connected else { return }
+            self.log("连接超时：设备没有响应，请确认面膜处于开机状态且离手机 1 米内")
+            // 清掉待重连标记，否则 cancel 之后的 didDisconnect 会无脑重连，形成死循环
+            self.reconnectID = nil
+            if let p = self.peripherals[id] { self.central.cancelPeripheralConnection(p) }
+        }
     }
 
     func disconnect() {
@@ -286,6 +326,12 @@ final class BluetoothManager: NSObject, ObservableObject,
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         bluetoothState = central.state
         log("蓝牙状态：\(stateText(central.state))")
+
+        if central.state == .poweredOn, pendingScan, !demoMode {
+            pendingScan = false
+            startScan()
+            return
+        }
         if central.state == .poweredOn,
            !demoMode,
            let id = reconnectID,
@@ -325,6 +371,7 @@ final class BluetoothManager: NSObject, ObservableObject,
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         self.peripheral = peripheral
+        connectAttempts = 0
         connected = devices.first(where: { $0.id == peripheral.identifier })
             ?? DiscoveredDevice(
                 id: peripheral.identifier,
@@ -344,6 +391,12 @@ final class BluetoothManager: NSObject, ObservableObject,
         error: Error?
     ) {
         log("连接失败：\(error?.localizedDescription ?? "未知原因")")
+        // 刚开广播时第一次连接经常失败，自动再试一次，省得用户来回点
+        if connectAttempts < 2, let id = reconnectID, central.state == .poweredOn {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                self?.startConnect(id)
+            }
+        }
     }
 
     func centralManager(
@@ -367,7 +420,18 @@ final class BluetoothManager: NSObject, ObservableObject,
         if let error = error { log("服务发现失败：\(error.localizedDescription)") }
         let services = peripheral.services ?? []
         if services.isEmpty {
-            log("未发现 0xFFE0 服务，请确认烧的是带 BLE 协议的固件")
+            /*
+             * iOS 会按外设缓存 GATT。换过固件之后有时会读到旧缓存，
+             * 表现就是"连上了但找不到 0xFFE0"。这里断开重连一次，
+             * iOS 会重新做服务发现；只重试一次，避免死循环。
+             */
+            if !serviceRetryUsed, reconnectID != nil, central.state == .poweredOn {
+                serviceRetryUsed = true
+                log("未发现 0xFFE0 服务，断开重连一次以刷新 iOS 的 GATT 缓存…")
+                central.cancelPeripheralConnection(peripheral)
+                return
+            }
+            log("未发现 0xFFE0 服务：请确认烧的是带 BLE 协议的固件（v197 及以上）")
             return
         }
         for service in services {

@@ -129,7 +129,7 @@ struct SettingsView: View {
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "关于")
-            Text("电子面膜 3.0 控制端 · v1.1.0")
+            Text("电子面膜 3.0 控制端 · v1.1.1")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.maskText)
             if let info = bluetooth.deviceInfo {
