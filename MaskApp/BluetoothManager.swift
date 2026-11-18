@@ -210,6 +210,8 @@ final class BluetoothManager: NSObject, ObservableObject,
                   self.connectToken == token,
                   self.peripheral?.state != .connected else { return }
             self.log("连接超时：设备没有响应，请确认面膜处于开机状态且离手机 1 米内")
+            // 清掉待重连标记，否则 cancel 之后的 didDisconnect 会无脑重连，形成死循环
+            self.reconnectID = nil
             if let p = self.peripherals[id] { self.central.cancelPeripheralConnection(p) }
         }
     }
