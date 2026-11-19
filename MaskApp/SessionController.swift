@@ -201,6 +201,15 @@ final class SessionController: ObservableObject {
         bluetooth.applyTime(durationLevel)
     }
 
+    /// 模式：待机时只记档位；理疗中立即切换，设备会"嘀"一声并点亮档位灯 10 秒。
+    /// 设备端切换模式不改倒计时，这里也不动本地 remain，两边保持同步。
+    func setModeIndex(_ index: Int) {
+        guard index != selectedModeIndex else { return }
+        selectedModeIndex = index
+        guard bluetooth.connected != nil else { return }
+        bluetooth.applyMode(index)
+    }
+
     /// 亮度档：待机时同步给设备（下次开始用），理疗中立即生效。
     /// 设备端收到后会"嘀"一声，并把定时/亮度指示灯按新档位点亮 10 秒。
     func setBrightLevel(_ level: Int) {

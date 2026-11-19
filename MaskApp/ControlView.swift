@@ -133,15 +133,18 @@ struct ControlView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 10)], spacing: 10) {
                 ForEach(modes) { mode in
                     Button {
-                        session.selectedModeIndex = mode.id
-                        session.syncSettings()
+                        session.setModeIndex(mode.id)
                     } label: {
                         modeCard(mode)
                     }
                     .buttonStyle(.plain)
-                    .disabled(session.isRunning)
-                    .opacity(session.isRunning ? 0.6 : 1.0)
                 }
+            }
+            if session.isRunning {
+                Text("理疗中可直接切换模式，设备会“嘀”一声并点亮对应档位灯 10 秒，倒计时不中断。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.maskTextSecondary.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
