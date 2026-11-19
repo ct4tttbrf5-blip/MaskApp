@@ -193,12 +193,32 @@ final class SessionController: ObservableObject {
         }
     }
 
-    /// 用户在设置里改动参数后，立即同步到设备
+    /// 用户在设置里改动参数后，立即同步到设备（待机态：只记档位，不点灯）
     func syncSettings() {
         guard bluetooth.connected != nil, !isRunning else { return }
         bluetooth.applyMode(selectedModeIndex)
         bluetooth.applyBright(brightLevel)
         bluetooth.applyTime(durationLevel)
+    }
+
+    /// 亮度档：待机时同步给设备（下次开始用），理疗中立即生效。
+    /// 设备端收到后会"嘀"一声，并把定时/亮度指示灯按新档位点亮 10 秒。
+    func setBrightLevel(_ level: Int) {
+        brightLevel = level
+        guard bluetooth.connected != nil else { return }
+        bluetooth.applyBright(level)
+    }
+
+    /// 时长档：待机时同步给设备，理疗中立即改变，设备会按新时长重新计时。
+    /// 本地倒计时也跟着重置，否则和设备的 remain_sec 会对不上。
+    func setDurationLevel(_ level: Int) {
+        durationLevel = level
+        guard bluetooth.connected != nil else { return }
+        bluetooth.applyTime(level)
+        if isRunning {
+            startedAt = Date()
+            remainingSeconds = durationMinutes * 60
+        }
     }
 
     // MARK: 记录持久化
