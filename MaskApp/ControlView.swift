@@ -188,8 +188,7 @@ struct ControlView: View {
             HStack(spacing: 8) {
                 ForEach(Array(0..<max(1, bluetooth.brightCount)), id: \.self) { level in
                     Button {
-                        session.brightLevel = level
-                        session.syncSettings()
+                        session.setBrightLevel(level)
                     } label: {
                         Text(bleBrightLabel(level))
                             .font(.system(size: 14, weight: .medium))
@@ -200,11 +199,12 @@ struct ControlView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .disabled(session.isRunning)
                 }
             }
             .maskCard()
-            Text("亮度档位由设备硬件决定，App 不做超出范围的设置。")
+            Text(session.isRunning
+                 ? "理疗中可直接切换亮度，设备会“嘀”一声并点亮对应档位灯 10 秒。"
+                 : "亮度档位由设备硬件决定，App 不做超出范围的设置。")
                 .font(.system(size: 11))
                 .foregroundColor(.maskTextSecondary.opacity(0.75))
         }
@@ -224,8 +224,7 @@ struct ControlView: View {
                 ForEach(Array(bluetooth.durations.enumerated()), id: \.offset) { index, minutes in
                     let level = index + 1
                     Button {
-                        session.durationLevel = level
-                        session.syncSettings()
+                        session.setDurationLevel(level)
                     } label: {
                         Text("\(minutes) 分钟")
                             .font(.system(size: 13, weight: .medium))
@@ -240,10 +239,14 @@ struct ControlView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .disabled(session.isRunning)
                 }
             }
             .maskCard()
+            if session.isRunning {
+                Text("理疗中可随时改时长，设备会按新时长重新计时并“嘀”一声。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.maskTextSecondary.opacity(0.75))
+            }
         }
     }
 
