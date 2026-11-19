@@ -126,10 +126,15 @@ struct SettingsView: View {
         .maskCard()
     }
 
+    /// 从 Info.plist 读取，避免界面上的版本号与实际安装包不一致
+    private static var appVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.2"
+    }
+
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle(text: "关于")
-            Text("电子面膜 3.0 控制端 · v1.1.1")
+            Text("电子面膜 3.0 控制端 · v\(Self.appVersion)")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.maskText)
             if let info = bluetooth.deviceInfo {
