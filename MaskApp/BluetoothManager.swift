@@ -49,11 +49,21 @@ final class BluetoothManager: NSObject, ObservableObject,
         }
     }
 
+    /// 演示电量场景：0=正常 86% / 1=低电 8%（验证电池符号变红）/ 2=充电中
+    @Published var demoBatteryScene: Int {
+        didSet {
+            UserDefaults.standard.set(demoBatteryScene, forKey: Self.demoBatKey)
+            guard demoMode, connected != nil else { return }
+            publishDemoStatus()
+        }
+    }
+
     /// 协议未确定时默认显示周边全部 BLE 设备，方便先找到设备名和 UUID。
     @Published var showAllDevices: Bool = true
 
     private static let demoKey = "maskapp.demoMode"
     private static let demoTypeKey = "maskapp.demoDeviceType"
+    private static let demoBatKey = "maskapp.demoBatteryScene"
 
     // MARK: 私有状态
 
@@ -87,6 +97,7 @@ final class BluetoothManager: NSObject, ObservableObject,
         demoMode = UserDefaults.standard.bool(forKey: Self.demoKey)
         let storedType = UserDefaults.standard.integer(forKey: Self.demoTypeKey)
         demoDeviceType = BLEConfig.DeviceType(rawValue: UInt8(storedType)) ?? .led
+        demoBatteryScene = UserDefaults.standard.integer(forKey: Self.demoBatKey)
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
     }
@@ -549,11 +560,26 @@ final class BluetoothManager: NSObject, ObservableObject,
     private func publishDemoStatus() {
         var flags: UInt8 = 0x20                       // powered
         if demoRunning { flags |= 0x01 }
+
+        // 演示电量：低电场景同时把固件的 LOW_BAT 标志位置起来，
+        // 与真机上报保持一致（固件是 battery_pct <= 10 置 0x08）
+        var battery = 86
+        switch demoBatteryScene {
+        case 1:
+            battery = 8
+            flags |= 0x08
+        case 2:
+            battery = 45
+            flags |= 0x02                             // 充电中
+        default:
+            break
+        }
+
         let frame = BLEConfig.demoStatusFrame(
             mode: demoModeIndex,
             bright: demoBright,
             remainingSeconds: demoRemaining,
-            battery: 86,
+            battery: battery,
             flags: flags
         )
         status = BLEConfig.parseStatus(frame)

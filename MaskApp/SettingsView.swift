@@ -50,6 +50,19 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                 }
+
+                // 便于无样机时验证"电量低于 10% 电池符号变红"
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("演示电量")
+                        .font(.system(size: 12))
+                        .foregroundColor(.maskTextSecondary)
+                    Picker("演示电量", selection: $bluetooth.demoBatteryScene) {
+                        Text("正常 86%").tag(0)
+                        Text("低电 8%").tag(1)
+                        Text("充电中").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                }
             }
 
             Divider().background(Color.maskBorder)

@@ -102,7 +102,12 @@ struct DeviceView: View {
             }
             HStack(spacing: 18) {
                 if let status = bluetooth.status {
-                    Label("电量 \(status.battery)%", systemImage: "battery.75")
+                    // 图标跟电量走，低于 10% 转红
+                    HStack(spacing: 4) {
+                        Image(systemName: status.batterySymbol)
+                        Text("电量 \(status.batteryText)")
+                    }
+                    .foregroundColor(status.isBatteryLow ? Color.maskDanger : Color.maskTextSecondary)
                     Label(status.isRunning ? bluetooth.modeTitle(status.mode) : "待机", systemImage: "light.max")
                 } else {
                     Label("等待设备状态上报", systemImage: "ellipsis")

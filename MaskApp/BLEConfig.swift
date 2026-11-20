@@ -192,6 +192,37 @@ enum BLEConfig {
 
         /// 刚连上时设备还没采到电池电压（上报 0），此时显示 -- 而不是 0%
         var batteryText: String { battery > 0 ? "\(battery)%" : "--" }
+
+        // MARK: 电量显示（图标分档 + 低电红）
+
+        /// 低电门限。与固件 face_mask_ble.c 的 FM_BLE_FLAG_LOW_BAT 一致：
+        /// 固件是 `battery_pct <= 10` 置位，这里同口径，避免"设备认为低电、
+        /// App 认为正常"的两套标准。
+        static let lowBatteryThreshold = 10
+
+        /// 电量 0 是"设备还没采到电压"的占位值（开机几秒内会上报 0），
+        /// 不能当成"电池耗尽"，否则刚连上就会误报红。
+        var hasBatteryReading: Bool { battery > 0 }
+
+        /// 低电：固件标志位与本地百分比任一命中即可，0% 的未知态不算低电
+        var isBatteryLow: Bool {
+            guard hasBatteryReading else { return false }
+            return isLowBattery || battery <= Self.lowBatteryThreshold
+        }
+
+        /// 电池图标按电量分档（SF Symbols battery.0/25/50/75/100）。
+        /// 充电时用带闪电的满格图标，与数字一起表达"在充"。
+        var batterySymbol: String {
+            if isCharging { return "battery.100.bolt" }
+            guard hasBatteryReading else { return "battery.0" }
+            switch battery {
+            case 88...: return "battery.100"
+            case 63..<88: return "battery.75"
+            case 38..<63: return "battery.50"
+            case 13..<38: return "battery.25"
+            default: return "battery.0"
+            }
+        }
     }
 
     // MARK: 指令编码

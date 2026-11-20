@@ -310,7 +310,12 @@ struct ControlView: View {
 
     private func deviceStatusRow(_ status: BLEConfig.DeviceStatus) -> some View {
         HStack(spacing: 16) {
-            Label("\(status.battery)%", systemImage: status.isCharging ? "bolt.fill" : "battery.75")
+            // 电量：图标随百分比分档，低于 10% 整组转红（固件 LOW_BAT 标志同口径）
+            HStack(spacing: 4) {
+                Image(systemName: status.batterySymbol)
+                Text(status.batteryText)
+            }
+            .foregroundColor(status.isBatteryLow ? Color.maskDanger : Color.maskTextSecondary)
             Label(status.isRunning ? "运行中" : (status.isPowered ? "待机" : "已关机"),
                   systemImage: "circle.fill")
             Label(bluetooth.modeTitle(status.mode), systemImage: "light.max")
